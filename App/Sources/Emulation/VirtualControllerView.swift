@@ -44,7 +44,11 @@ final class VirtualControllerView: UIView {
             shape.shadowOpacity = 0.55
             shape.shadowRadius = 0
             text.alignmentMode = .center
+            #if os(visionOS)
+            text.contentsScale = 2
+            #else
             text.contentsScale = UIScreen.main.scale
+            #endif
             text.string = label
             let rounded = UIFont.systemFont(ofSize: 17, weight: .heavy).fontDescriptor.withDesign(.rounded)
             text.font = rounded.map { UIFont(descriptor: $0, size: 17) } ?? UIFont.systemFont(ofSize: 17, weight: .heavy)
@@ -242,7 +246,9 @@ final class VirtualControllerView: UIView {
     var hapticsEnabled = true
     /// Portrait only: where the control area starts (set by EmulatorContainerView).
     var portraitControlsTop: CGFloat? { didSet { if oldValue != portraitControlsTop { setNeedsLayout() } } }
+    #if !os(visionOS)
     private let haptic = UIImpactFeedbackGenerator(style: .light)
+    #endif
 
     private let controls: [Control] = [
         Control(kind: .circlePad, label: ""),
@@ -495,7 +501,9 @@ final class VirtualControllerView: UIView {
         for raw in buttons.symmetricDifference(pressedButtons) {
             az_button(AZButton(rawValue: raw), buttons.contains(raw))
         }
+        #if !os(visionOS)
         if hapticsEnabled, !newlyPressed.isEmpty { haptic.impactOccurred(intensity: 0.6) }
+        #endif
         pressedButtons = buttons
         az_stick(AZ_STICK_CIRCLE_PAD, Float(stick.x), Float(stick.y))
     }

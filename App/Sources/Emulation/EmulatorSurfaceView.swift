@@ -157,10 +157,17 @@ final class EmulatorSurfaceUIView: UIView {
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
+        #if os(visionOS)
+        // No UIScreen on visionOS: the window's trait collection carries the render scale.
+        let scale = traitCollection.displayScale > 0 ? traitCollection.displayScale : 2
+        contentScaleFactor = scale
+        metalLayer.contentsScale = scale
+        #else
         if let screen = window?.windowScene?.screen {
             contentScaleFactor = screen.nativeScale
             metalLayer.contentsScale = screen.nativeScale
         }
+        #endif
         reportSurface(force: true)
     }
 

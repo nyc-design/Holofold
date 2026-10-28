@@ -232,7 +232,11 @@ struct EmulationScreen: View {
                 let all = AppSettings.ScreenLayout.allCases
                 let next = all[(all.firstIndex(of: settings.landscapeLayout)! + 1) % all.count]
                 settings.landscapeLayout = next
+                #if os(visionOS)
+                az_set_layout(Int32(next.rawValue), false)
+                #else
                 az_set_layout(Int32(next.rawValue), UIScreen.main.bounds.height > UIScreen.main.bounds.width)
+                #endif
                 resume()
                 show("横屏布局：\(next.title)")
             },

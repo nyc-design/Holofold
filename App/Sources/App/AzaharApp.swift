@@ -1,6 +1,8 @@
 import AVFoundation
 import SwiftUI
 
+// visionOS has its own entry point and launcher window (Vision/VisionApp.swift).
+#if !os(visionOS)
 @main
 struct AzaharApp: App {
     @Environment(\.scenePhase) private var scenePhase
@@ -30,3 +32,4 @@ struct AzaharApp: App {
         }
     }
 }
+#endif
