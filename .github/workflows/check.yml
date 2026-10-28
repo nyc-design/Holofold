@@ -1,0 +1,16 @@
+# Checks that no game data, keys or personal configuration slip into a pull request.
+# There is deliberately no full build here: the emulator core takes too long for CI.
+name: Private-file check
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/check-private.sh --all

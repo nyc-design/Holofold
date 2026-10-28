@@ -1,0 +1,51 @@
+name: Bug report
+description: Something doesn't work as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Never attach or link games, ROMs, BIOS / firmware or keys. Name the game by title and title ID only.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what happened instead.
+    validations:
+      required: true
+  - type: input
+    id: game
+    attributes:
+      label: Game
+      placeholder: "Title (title ID), or the bundled homebrew"
+  - type: input
+    id: device
+    attributes:
+      label: Headset and visionOS version
+      placeholder: "Vision Pro M5, visionOS 27.0"
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: Holofold commit
+      placeholder: "git rev-parse --short HEAD"
+  - type: dropdown
+    id: account
+    attributes:
+      label: Signing
+      options:
+        - Free Apple ID
+        - Paid developer account (Increased Memory Limit on)
+        - Paid developer account (Increased Memory Limit off)
+  - type: textarea
+    id: settings
+    attributes:
+      label: Settings and launch arguments
+      description: Resolution, interpreter compatibility mode, JIT, anything non-default.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Diagnostics
+      description: Paste or attach vision-diag.log and any hang-*.txt (remove personal paths).
+      render: text
