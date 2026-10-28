@@ -1,6 +1,10 @@
 # Holofold
 
+**English** | [简体中文](README.zh-CN.md)
+
 **3DS emulation for Apple Vision Pro, in real stereoscopic 3D.**
+
+![Holofold running on Apple Vision Pro: stereoscopic top screen, bottom screen in its own window, played with PS VR2 Sense controllers](docs/images/holofold-vision-pro.jpg)
 
 Holofold runs 3DS software natively on Apple Vision Pro. The top screen is shown in true stereo (each eye gets its own image, just like turning up the 3D slider), optionally bent into a curved "cinema" screen, and the bottom screen floats in its own tilted window that you touch by looking and pinching.
 
@@ -219,5 +223,7 @@ Holofold is licensed under the **GNU General Public License v2.0 or later** (see
 ## Disclaimer
 
 Holofold is an independent, non-commercial project. It is **not affiliated with, endorsed by, or sponsored by Nintendo or Apple**. "Nintendo 3DS" is a trademark of Nintendo; "Apple Vision Pro" and "visionOS" are trademarks of Apple Inc. They are used here only to describe compatibility.
+
+The game footage in the screenshot comes from a cartridge the author owns and dumped themselves, and is shown only to demonstrate the emulator. The game and its trademarks belong to their respective owners.
 
 Holofold does not include, link to, or distribute any copyrighted games, ROMs, BIOS, firmware, or encryption keys, and the project will not provide them. Please support the developers by buying the games you play and dumping them from your own hardware.
