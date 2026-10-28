@@ -1,0 +1,468 @@
+diff --git a/src/video_core/offscreen_output.h b/src/video_core/offscreen_output.h
+new file mode 100644
+index 0000000..7cc01e5
+--- /dev/null
++++ b/src/video_core/offscreen_output.h
+@@ -0,0 +1,103 @@
++// Copyright 2026 Bifold contributors
++// Licensed under GPLv2 or any later version
++// Refer to the license.txt file included.
++
++// Offscreen presentation (Apple Vision Pro). Instead of presenting to the swapchain, the Vulkan
++// present thread copies every finished frame into one of a small ring of images whose Metal
++// textures the frontend can read (here: blitted into a RealityKit LowLevelTexture). Header-only so
++// the renderer and the frontend layer share one copy of the state without new build sources.
++//
++// Protocol: the presenter writes into a ring slot that is neither the newest published frame nor
++// the slot the frontend holds, waits for the copy to finish, then publishes it. The frontend
++// Acquire()s the newest slot (blocking reuse of exactly that slot), reads it on the GPU and
++// Release()s it once its command buffer completed.
++
++#pragma once
++
++#include <array>
++#include <atomic>
++#include <cstdint>
++#include <mutex>
++
++namespace VideoCore::Offscreen {
++
++constexpr int kRingSize = 3;
++
++struct State {
++    /// Set by the frontend before the renderer starts; read once by the presenter.
++    std::atomic_bool requested{false};
++
++    std::mutex mutex;
++    /// Unretained id<MTLTexture> of each ring image (owned by the Vulkan images).
++    std::array<void*, kRingSize> textures{};
++    uint32_t width = 0;
++    uint32_t height = 0;
++    /// Incremented whenever the ring is recreated (size change), so the frontend rebuilds.
++    uint64_t generation = 0;
++    int latest = -1;   ///< newest published slot
++    int in_use = -1;   ///< slot the frontend currently reads
++    uint64_t frame = 0; ///< increments with every published frame
++};
++
++inline State& Get() {
++    static State state;
++    return state;
++}
++
++/// Presenter: next slot to write. Never the newest frame or the slot being read.
++inline int NextWriteSlot(int previous) {
++    auto& s = Get();
++    std::scoped_lock lock{s.mutex};
++    for (int i = 1; i <= kRingSize; ++i) {
++        const int slot = (previous + i) % kRingSize;
++        if (slot != s.latest && slot != s.in_use) {
++            return slot;
++        }
++    }
++    return (previous + 1) % kRingSize; // unreachable with three slots
++}
++
++/// Presenter: the copy into `slot` has completed on the GPU.
++inline void Publish(int slot) {
++    auto& s = Get();
++    std::scoped_lock lock{s.mutex};
++    s.latest = slot;
++    ++s.frame;
++}
++
++struct Acquired {
++    void* texture = nullptr;
++    int slot = -1;
++    uint64_t frame = 0;
++    uint64_t generation = 0;
++    uint32_t width = 0;
++    uint32_t height = 0;
++};
++
++/// Frontend: hold the newest frame. Returns slot -1 when nothing was published yet.
++inline Acquired Acquire() {
++    auto& s = Get();
++    std::scoped_lock lock{s.mutex};
++    Acquired out;
++    if (s.latest < 0 || s.in_use >= 0) {
++        return out;
++    }
++    s.in_use = s.latest;
++    out.slot = s.latest;
++    out.texture = s.textures[s.latest];
++    out.frame = s.frame;
++    out.generation = s.generation;
++    out.width = s.width;
++    out.height = s.height;
++    return out;
++}
++
++inline void Release(int slot) {
++    auto& s = Get();
++    std::scoped_lock lock{s.mutex};
++    if (s.in_use == slot) {
++        s.in_use = -1;
++    }
++}
++
++} // namespace VideoCore::Offscreen
+diff --git a/src/video_core/renderer_vulkan/vk_instance.cpp b/src/video_core/renderer_vulkan/vk_instance.cpp
+index aea1cf5..8629042 100644
+--- a/src/video_core/renderer_vulkan/vk_instance.cpp
++++ b/src/video_core/renderer_vulkan/vk_instance.cpp
+@@ -420,7 +420,7 @@ bool Instance::CreateDevice() {
+         return false;
+     }
+ 
+-    boost::container::static_vector<const char*, 13> enabled_extensions;
++    boost::container::static_vector<const char*, 16> enabled_extensions;
+     const auto add_extension = [&](std::string_view extension, bool blacklist = false,
+                                    std::string_view reason = "") -> bool {
+         const auto result =
+@@ -475,6 +475,10 @@ bool Instance::CreateDevice() {
+     const bool has_fragment_shader_barycentric =
+         add_extension(VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME, is_moltenvk,
+                       "the PerVertexKHR attribute is not supported by MoltenVK");
++#ifdef __APPLE__
++    // Offscreen presentation exports the frame images as MTLTextures (video_core/offscreen_output.h).
++    metal_objects = add_extension("VK_EXT_metal_objects");
++#endif
+ 
+     const auto family_properties = physical_device.getQueueFamilyProperties();
+     if (family_properties.empty()) {
+diff --git a/src/video_core/renderer_vulkan/vk_instance.h b/src/video_core/renderer_vulkan/vk_instance.h
+index 77b8376..7d3f2f9 100644
+--- a/src/video_core/renderer_vulkan/vk_instance.h
++++ b/src/video_core/renderer_vulkan/vk_instance.h
+@@ -176,6 +176,11 @@ public:
+         return external_memory_host;
+     }
+ 
++    /// Returns true when VK_EXT_metal_objects is enabled (Apple: export images as MTLTextures)
++    bool IsMetalObjectsSupported() const {
++        return metal_objects;
++    }
++
+     /// Returns true when VK_KHR_fragment_shader_barycentric is supported
+     bool IsFragmentShaderBarycentricSupported() const {
+         return fragment_shader_barycentric;
+@@ -334,6 +339,7 @@ protected:
+     bool fragment_shader_barycentric{};
+     bool shader_stencil_export{};
+     bool external_memory_host{};
++    bool metal_objects{};
+     u64 min_imported_host_pointer_alignment{};
+     bool layered_rendering_supported{true};
+     bool tooling_info{};
+diff --git a/src/video_core/renderer_vulkan/vk_present_window.cpp b/src/video_core/renderer_vulkan/vk_present_window.cpp
+index 5305ea2..b96031d 100644
+--- a/src/video_core/renderer_vulkan/vk_present_window.cpp
++++ b/src/video_core/renderer_vulkan/vk_present_window.cpp
+@@ -10,6 +10,7 @@
+ #include "common/thread.h"
+ #include "core/frontend/emu_window.h"
+ #include "video_core/gpu.h"
++#include "video_core/offscreen_output.h"
+ #include "video_core/renderer_vulkan/vk_instance.h"
+ #include "video_core/renderer_vulkan/vk_platform.h"
+ #include "video_core/renderer_vulkan/vk_present_window.h"
+@@ -18,6 +19,10 @@
+ #include "vk_platform.h"
+ 
+ #include <vk_mem_alloc.h>
++#ifdef __APPLE__
++#include <thread>
++#include <vulkan/vulkan_metal.h>
++#endif
+ 
+ MICROPROFILE_DEFINE(Vulkan_WaitPresent, "Vulkan", "Wait For Present", MP_RGB(128, 128, 128));
+ 
+@@ -151,6 +156,14 @@ PresentWindow::PresentWindow(Frontend::EmuWindow& emu_window_, const Instance& i
+         }
+     }
+ 
++#ifdef __APPLE__
++    offscreen = VideoCore::Offscreen::Get().requested.load() && instance.IsMetalObjectsSupported();
++    if (VideoCore::Offscreen::Get().requested.load() && !offscreen) {
++        LOG_ERROR(Render_Vulkan, "Offscreen presentation requested but VK_EXT_metal_objects is missing");
++    }
++    LOG_INFO(Render_Vulkan, "Presentation: {}", offscreen ? "offscreen (exported textures)" : "swapchain");
++#endif
++
+     if (use_present_thread) {
+         present_thread = std::jthread([this](std::stop_token token) { PresentThread(token); });
+     }
+@@ -166,6 +179,7 @@ PresentWindow::~PresentWindow() {
+         instance.GetInstance().destroySurfaceKHR(next_surface);
+         next_surface = vk::SurfaceKHR{};
+     }
++    DestroyOffscreenRing();
+     device.destroyCommandPool(command_pool);
+     device.destroyRenderPass(present_renderpass);
+     for (auto& frame : swap_chain) {
+@@ -426,6 +440,10 @@ void PresentWindow::NotifySurfaceChanged() {
+ }
+ 
+ void PresentWindow::CopyToSwapchain(Frame* frame) {
++    if (offscreen) {
++        CopyToOffscreen(frame);
++        return;
++    }
+     const auto recreate_swapchain = [&] {
+ #ifdef ANDROID
+         {
+@@ -570,6 +588,211 @@ void PresentWindow::CopyToSwapchain(Frame* frame) {
+     }
+ }
+ 
++void PresentWindow::DestroyOffscreenRing() {
++    auto& state = VideoCore::Offscreen::Get();
++    {
++        std::scoped_lock lock{state.mutex};
++        state.latest = -1;
++    }
++#ifdef __APPLE__
++    // Let the frontend finish reading the slot it holds (its GPU work completes in a few ms).
++    for (int i = 0; i < 200; ++i) {
++        {
++            std::scoped_lock lock{state.mutex};
++            if (state.in_use < 0) {
++                break;
++            }
++        }
++        std::this_thread::sleep_for(std::chrono::milliseconds(5));
++    }
++#endif
++    {
++        std::scoped_lock lock{state.mutex};
++        state.textures = {};
++        state.width = 0;
++        state.height = 0;
++        ++state.generation;
++    }
++    for (auto& target : offscreen_ring) {
++        if (target.image) {
++            vmaDestroyImage(instance.GetAllocator(), static_cast<VkImage>(target.image),
++                            target.allocation);
++        }
++        target = {};
++    }
++    offscreen_width = 0;
++    offscreen_height = 0;
++}
++
++void PresentWindow::RecreateOffscreenRing(u32 width, u32 height) {
++#ifdef __APPLE__
++    DestroyOffscreenRing();
++
++    const auto export_metal_objects = reinterpret_cast<PFN_vkExportMetalObjectsEXT>(
++        instance.GetDevice().getProcAddr("vkExportMetalObjectsEXT"));
++    if (!export_metal_objects) {
++        LOG_CRITICAL(Render_Vulkan, "vkExportMetalObjectsEXT is unavailable");
++        UNREACHABLE();
++    }
++
++    std::array<void*, VideoCore::Offscreen::kRingSize> textures{};
++    for (std::size_t i = 0; i < offscreen_ring.size(); ++i) {
++        VkExportMetalObjectCreateInfoEXT export_info = {
++            .sType = VK_STRUCTURE_TYPE_EXPORT_METAL_OBJECT_CREATE_INFO_EXT,
++            .pNext = nullptr,
++            .exportObjectType = VK_EXPORT_METAL_OBJECT_TYPE_METAL_TEXTURE_BIT_EXT,
++        };
++        const VkImageCreateInfo image_info = {
++            .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
++            .pNext = &export_info,
++            .imageType = VK_IMAGE_TYPE_2D,
++            .format = static_cast<VkFormat>(swapchain.GetSurfaceFormat().format),
++            .extent = {width, height, 1},
++            .mipLevels = 1,
++            .arrayLayers = 1,
++            .samples = VK_SAMPLE_COUNT_1_BIT,
++            .tiling = VK_IMAGE_TILING_OPTIMAL,
++            .usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
++                     VK_IMAGE_USAGE_SAMPLED_BIT,
++            .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
++            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
++        };
++        const VmaAllocationCreateInfo alloc_info = {
++            .usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
++        };
++        VkImage image{};
++        if (vmaCreateImage(instance.GetAllocator(), &image_info, &alloc_info, &image,
++                           &offscreen_ring[i].allocation, nullptr) != VK_SUCCESS) {
++            LOG_CRITICAL(Render_Vulkan, "Failed allocating an offscreen presentation image");
++            UNREACHABLE();
++        }
++        offscreen_ring[i].image = vk::Image{image};
++
++        VkExportMetalTextureInfoEXT texture_info = {
++            .sType = VK_STRUCTURE_TYPE_EXPORT_METAL_TEXTURE_INFO_EXT,
++            .pNext = nullptr,
++            .image = image,
++            .imageView = VK_NULL_HANDLE,
++            .bufferView = VK_NULL_HANDLE,
++            .plane = VK_IMAGE_ASPECT_PLANE_0_BIT,
++            .mtlTexture = nullptr,
++        };
++        VkExportMetalObjectsInfoEXT objects_info = {
++            .sType = VK_STRUCTURE_TYPE_EXPORT_METAL_OBJECTS_INFO_EXT,
++            .pNext = &texture_info,
++        };
++        export_metal_objects(static_cast<VkDevice>(instance.GetDevice()), &objects_info);
++        textures[i] = texture_info.mtlTexture;
++    }
++
++    offscreen_width = width;
++    offscreen_height = height;
++    auto& state = VideoCore::Offscreen::Get();
++    std::scoped_lock lock{state.mutex};
++    state.textures = textures;
++    state.width = width;
++    state.height = height;
++    state.latest = -1;
++    ++state.generation;
++    LOG_INFO(Render_Vulkan, "Offscreen presentation ring: {}x{}", width, height);
++#endif
++}
++
++void PresentWindow::CopyToOffscreen(Frame* frame) {
++    if (frame->width != offscreen_width || frame->height != offscreen_height) [[unlikely]] {
++        std::scoped_lock submit_lock{scheduler.submit_mutex};
++        graphics_queue.waitIdle();
++        RecreateOffscreenRing(frame->width, frame->height);
++    }
++
++    const int slot = VideoCore::Offscreen::NextWriteSlot(offscreen_slot);
++    offscreen_slot = slot;
++    const vk::Image target = offscreen_ring[slot].image;
++
++    const vk::CommandBuffer cmdbuf = frame->cmdbuf;
++    cmdbuf.begin({.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
++
++    const auto color_range = vk::ImageSubresourceRange{
++        .aspectMask = vk::ImageAspectFlagBits::eColor,
++        .baseMipLevel = 0,
++        .levelCount = 1,
++        .baseArrayLayer = 0,
++        .layerCount = 1,
++    };
++    const std::array pre_barriers{
++        vk::ImageMemoryBarrier{
++            .srcAccessMask = vk::AccessFlagBits::eNone,
++            .dstAccessMask = vk::AccessFlagBits::eTransferWrite,
++            .oldLayout = vk::ImageLayout::eUndefined,
++            .newLayout = vk::ImageLayout::eTransferDstOptimal,
++            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++            .image = target,
++            .subresourceRange = color_range,
++        },
++        vk::ImageMemoryBarrier{
++            .srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite,
++            .dstAccessMask = vk::AccessFlagBits::eTransferRead,
++            .oldLayout = vk::ImageLayout::eTransferSrcOptimal,
++            .newLayout = vk::ImageLayout::eTransferSrcOptimal,
++            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++            .image = frame->image,
++            .subresourceRange = color_range,
++        },
++    };
++    const vk::ImageMemoryBarrier post_barrier{
++        .srcAccessMask = vk::AccessFlagBits::eTransferWrite,
++        .dstAccessMask = vk::AccessFlagBits::eMemoryRead,
++        .oldLayout = vk::ImageLayout::eTransferDstOptimal,
++        .newLayout = vk::ImageLayout::eGeneral,
++        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++        .image = target,
++        .subresourceRange = color_range,
++    };
++    cmdbuf.pipelineBarrier(vk::PipelineStageFlagBits::eColorAttachmentOutput,
++                           vk::PipelineStageFlagBits::eTransfer, vk::DependencyFlagBits::eByRegion,
++                           {}, {}, pre_barriers);
++    cmdbuf.copyImage(frame->image, vk::ImageLayout::eTransferSrcOptimal, target,
++                     vk::ImageLayout::eTransferDstOptimal,
++                     MakeImageCopy(frame->width, frame->height, frame->width, frame->height));
++    cmdbuf.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
++                           vk::PipelineStageFlagBits::eAllCommands,
++                           vk::DependencyFlagBits::eByRegion, {}, {}, post_barrier);
++    cmdbuf.end();
++
++    static constexpr vk::PipelineStageFlags wait_stage = vk::PipelineStageFlagBits::eAllCommands;
++    const vk::SubmitInfo submit_info = {
++        .waitSemaphoreCount = 1u,
++        .pWaitSemaphores = &frame->render_ready,
++        .pWaitDstStageMask = &wait_stage,
++        .commandBufferCount = 1u,
++        .pCommandBuffers = &cmdbuf,
++    };
++    {
++        std::scoped_lock submit_lock{scheduler.submit_mutex};
++        try {
++            graphics_queue.submit(submit_info, frame->present_done);
++        } catch (vk::DeviceLostError& err) {
++            LOG_CRITICAL(Render_Vulkan, "Device lost during offscreen submit: {}", err.what());
++            UNREACHABLE();
++        }
++    }
++
++    // Publish only once the copy is complete, so the frontend never reads a half-written image.
++    // The fence stays signalled; GetRenderFrame resets it when the frame is reused.
++    const vk::Device device = instance.GetDevice();
++    while (device.waitForFences(frame->present_done, false, std::numeric_limits<u64>::max()) !=
++           vk::Result::eSuccess) {
++    }
++    VideoCore::Offscreen::Publish(slot);
++
++    if (VideoCore::debug_present_hook) {
++        VideoCore::debug_present_hook();
++    }
++}
++
+ vk::RenderPass PresentWindow::CreateRenderpass() {
+     const vk::AttachmentReference color_ref = {
+         .attachment = 0,
+diff --git a/src/video_core/renderer_vulkan/vk_present_window.h b/src/video_core/renderer_vulkan/vk_present_window.h
+index 0f83aed..528dd9a 100644
+--- a/src/video_core/renderer_vulkan/vk_present_window.h
++++ b/src/video_core/renderer_vulkan/vk_present_window.h
+@@ -2,6 +2,7 @@
+ // Licensed under GPLv2 or any later version
+ // Refer to the license.txt file included.
+ 
++#include <array>
+ #include <atomic>
+ #include <chrono>
+ #include <condition_variable>
+@@ -73,6 +74,12 @@ private:
+ 
+     void CopyToSwapchain(Frame* frame);
+ 
++    /// Offscreen presentation (video_core/offscreen_output.h): copies the frame into the
++    /// exported image ring instead of the swapchain.
++    void CopyToOffscreen(Frame* frame);
++    void RecreateOffscreenRing(u32 width, u32 height);
++    void DestroyOffscreenRing();
++
+     /// Returns a rendered frame to the free pool without presenting it (fast-forward on
+     /// FIFO-only swapchains such as MoltenVK on iOS).
+     void DropFrame(Frame* frame);
+@@ -108,6 +115,16 @@ private:
+     bool blit_supported;
+     bool use_present_thread{true};
+     void* last_render_surface{};
++
++    struct OffscreenImage {
++        vk::Image image;
++        VmaAllocation allocation{};
++    };
++    bool offscreen{};
++    std::array<OffscreenImage, 3> offscreen_ring{};
++    u32 offscreen_width{};
++    u32 offscreen_height{};
++    int offscreen_slot{-1};
+ };
+ 
+ } // namespace Vulkan

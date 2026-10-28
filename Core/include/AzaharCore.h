@@ -236,6 +236,32 @@ void az_swap_screens(bool swapped);
 /// Layout: 0 default (stacked), 1 single, 2 large+small, 3 side by side, 4 hybrid.
 void az_set_layout(int layout, bool is_portrait);
 
+// ---- Offscreen presentation and stereo (Apple Vision Pro) --------------------------------------
+// With offscreen output on, the Vulkan renderer still needs a CAMetalLayer from az_set_surface
+// (it is never presented to), but every frame is copied into a ring of three textures instead.
+// The app takes the newest one with az_offscreen_acquire, reads it on the GPU, and gives it back
+// with az_offscreen_release once that GPU work completed. Both are safe from any thread.
+
+/// Must be set before az_run_game; applies to the next session.
+void az_set_offscreen_output(bool enabled);
+
+typedef struct {
+    void* texture;       ///< unretained id<MTLTexture>, valid while the slot is held
+    int slot;
+    uint64_t frame;      ///< increases with every new frame
+    uint64_t generation; ///< changes when the textures are recreated (size change)
+    int width, height;
+} AZOffscreenFrame;
+
+/// Holds the newest frame. False when there is none yet, or one is still held.
+bool az_offscreen_acquire(AZOffscreenFrame* out);
+void az_offscreen_release(int slot);
+
+/// Side-by-side full-width stereo: the frame is twice as wide, the left half shows the left eye's
+/// screens, the right half the right eye's (bottom screen identical). depth_percent is the 3D
+/// slider (1-100). Applied on the next settings load (az_run_game / az_reload_settings).
+void az_set_stereo(bool enabled, int depth_percent);
+
 // ---------------------------------------------------------------------------------------------
 // Input
 // ---------------------------------------------------------------------------------------------

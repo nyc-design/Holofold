@@ -81,6 +81,9 @@ namespace Config {
 std::string Path();
 /// Loads the ini into Settings::values (creating a default file if missing).
 void Load();
+/// Stereo output for Apple Vision Pro: when enabled, Load() forces side-by-side full-width
+/// stereo with the given 3D slider depth (1-100), whatever the ini says.
+void SetStereoOverride(bool enabled, int depth_percent);
 } // namespace Config
 
 // ----- jit -------------------------------------------------------------------------------------

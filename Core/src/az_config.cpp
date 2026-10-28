@@ -2,6 +2,9 @@
 // Settings::values. Keys are Azahar's own setting labels, so the file is easy to compare
 // with a desktop qt-config.ini. Licensed under GPLv2 or any later version.
 
+#include <algorithm>
+#include <atomic>
+
 #include <INIReader.h>
 #if defined(__APPLE__)
 #include <TargetConditionals.h>
@@ -99,6 +102,14 @@ void BindInput() {
 }
 
 } // namespace
+
+std::atomic_bool g_stereo_override{false};
+std::atomic_int g_stereo_depth{100};
+
+void SetStereoOverride(bool enabled, int depth_percent) {
+    g_stereo_depth = std::clamp(depth_percent, 1, 100);
+    g_stereo_override = enabled;
+}
 
 std::string Path() {
     return FileUtil::GetUserPath(FileUtil::UserPath::ConfigDir) + "ios-config.ini";
@@ -199,6 +210,14 @@ void Load() {
     // The shader JIT is x86-64 only; there is nothing to gain on ARM.
     v.use_shader_jit = false;
 #endif
+
+    if (g_stereo_override) {
+        // Both eyes of the top screen, each in its own half of the (double-width) frame. The
+        // 3D slider must be above 0, otherwise games render the same image for both eyes.
+        v.render_3d = Settings::StereoRenderOption::SideBySideFull;
+        v.factor_3d = static_cast<u32>(g_stereo_depth.load());
+        v.swap_eyes_3d = false;
+    }
 
     BindInput();
     LOG_INFO(Config, "Loaded {} (cpu_jit={}, api={})", path, v.use_cpu_jit.GetValue(),
