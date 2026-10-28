@@ -89,6 +89,7 @@ final class EmulatorCore: ObservableObject {
 
     func start(_ game: Game) {
         guard emuThread == nil else { return }
+        applyInterpreterMode()
         reloadSettings()
         currentGame = game
         state = .loading(stage: 0, progress: 0)
@@ -124,6 +125,30 @@ final class EmulatorCore: ObservableObject {
                 }
             }
         }
+    }
+
+    /// The interpreter's speed-ups on (default) or off (AppSettings.interpreterCompat). The env
+    /// variable is read when the CPU cores are created, i.e. while the game boots, so this runs
+    /// before az_run_game; the switches take effect from the next translation.
+    private func applyInterpreterMode() {
+        let compat = AppSettings.shared.interpreterCompat
+        if compat {
+            setenv("AZ_CLEAR_ON_SWITCH", "1", 1)
+        } else {
+            unsetenv("AZ_CLEAR_ON_SWITCH")
+        }
+        _ = az_debug_dyncom_tailcall(compat ? 0 : 1)
+        _ = az_debug_dyncom_link(compat ? 0 : 1)
+        _ = az_debug_dyncom_special(compat ? 0 : 1)
+        _ = az_debug_vfp_native(compat ? 0 : 2)
+    }
+
+    /// The interpreter switches as the core reports them, for diagnostics.
+    var interpreterModeDescription: String {
+        let clear = getenv("AZ_CLEAR_ON_SWITCH") != nil
+        return "compat=\(AppSettings.shared.interpreterCompat ? "on" : "off") clearOnSwitch=\(clear ? 1 : 0) "
+            + "vfp=\(az_debug_vfp_native(-1)) tailcall=\(az_debug_dyncom_tailcall(-1)) "
+            + "link=\(az_debug_dyncom_link(-1)) special=\(az_debug_dyncom_special(-1))"
     }
 
     private func sessionEnded(result: AZResult, details: String) {
@@ -184,6 +209,22 @@ final class EmulatorCore: ObservableObject {
     }
 
     static func describe(_ result: AZResult, details: String) -> String {
+        #if os(visionOS)
+        // Holofold (visionOS) shows English; the iOS app keeps Bifold's Chinese messages.
+        let english: String
+        switch result {
+        case AZ_RESULT_ERROR_GET_LOADER: english = "This game file's format isn't recognized."
+        case AZ_RESULT_ERROR_ENCRYPTED: english = "This game is encrypted. Only decrypted dumps (decrypted .3ds/.cci, or an installed decrypted .cia) are supported."
+        case AZ_RESULT_ERROR_INVALID_FORMAT: english = "The game file is damaged or not a valid format."
+        case AZ_RESULT_ERROR_SYSTEM_FILES: english = "System files are missing. Copy the files dumped from your own console into Holofold › Azahar › sysdata."
+        case AZ_RESULT_ERROR_VIDEO_CORE: english = "The graphics system (Vulkan/MoltenVK) couldn't start."
+        case AZ_RESULT_ERROR_NO_SURFACE: english = "The game screen wasn't ready. Please try again."
+        case AZ_RESULT_ERROR_GBA_TITLE: english = "GBA Virtual Console titles aren't supported."
+        case AZ_RESULT_ERROR_SYSTEM_MODE: english = "The system mode this game needs couldn't be determined."
+        default: english = "The emulator ran into an error."
+        }
+        return details.isEmpty ? english : "\(english)\n\(details)"
+        #else
         let base: String
         switch result {
         case AZ_RESULT_ERROR_GET_LOADER: base = "无法识别的游戏文件格式。"
@@ -197,6 +238,7 @@ final class EmulatorCore: ObservableObject {
         default: base = "模拟器出错。"
         }
         return details.isEmpty ? base : "\(base)\n\(details)"
+        #endif
     }
 }
 

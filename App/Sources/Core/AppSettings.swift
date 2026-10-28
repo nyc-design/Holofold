@@ -67,7 +67,18 @@ final class AppSettings: ObservableObject {
     }
 
     // MARK: Graphics
-    @AppStorage("resolutionFactor") var resolutionFactor = 2 { willSet { objectWillChange.send() } }
+    @AppStorage("resolutionFactor") var resolutionFactor = AppSettings.defaultResolutionFactor { willSet { objectWillChange.send() } }
+    /// Apple Vision Pro shows the screens metres wide, so it renders at up to 4× (1600 × 960 per
+    /// eye). Without the Increased Memory Limit entitlement (free developer accounts) the app gets
+    /// much less memory and 4× stereo can get it closed by the system, so the default follows the
+    /// memory available at launch. An explicit choice (setting, -resolutionFactor) always wins.
+    static var defaultResolutionFactor: Int {
+        #if os(visionOS)
+        return VisionMemoryBudget.resolutionFactor
+        #else
+        return 2
+        #endif
+    }
     @AppStorage("asyncShaders") var asyncShaders = true { willSet { objectWillChange.send() } }
     @AppStorage("textureFilter") var textureFilter = 0 { willSet { objectWillChange.send() } }
     @AppStorage("linearFiltering") var linearFiltering = true { willSet { objectWillChange.send() } }
@@ -123,6 +134,11 @@ final class AppSettings: ObservableObject {
     @AppStorage("controllerOpacity") var controllerOpacity = 0.75 { willSet { objectWillChange.send() } }
     @AppStorage("haptics") var haptics = true { willSet { objectWillChange.send() } }
     @AppStorage("motionControls") var motionControls = true { willSet { objectWillChange.send() } }
+    /// Interpreter compatibility mode: the interpreter without the speed-ups of 2026-10-23/24
+    /// (kept translations across core switches, host-FPU VFP, tail-call dispatch, block linking and
+    /// return prediction, specialised handlers). For telling whether a game hang comes from them.
+    /// Applied when a game starts; no effect while JIT is in use.
+    @AppStorage("interpreterCompat") var interpreterCompat = false { willSet { objectWillChange.send() } }
     @AppStorage("hideControllerWithGamepad") var hideControllerWithGamepad = true { willSet { objectWillChange.send() } }
 
     // MARK: Multiplayer
@@ -213,3 +229,23 @@ final class AppSettings: ObservableObject {
         try? ini.write(to: url, atomically: true, encoding: .utf8)
     }
 }
+
+#if os(visionOS)
+import os
+
+/// The default internal resolution from the memory the app may still use, measured once at launch.
+/// Conservative thresholds (Apple does not document the limits); vision-diag.log records both
+/// numbers so they can be tuned from real devices.
+enum VisionMemoryBudget {
+    static let availableBytes: UInt64 = UInt64(os_proc_available_memory())
+
+    static let resolutionFactor: Int = {
+        // 0 = not reported (the Simulator always says 0): take the middle step.
+        guard availableBytes > 0 else { return 3 }
+        let gib = Double(availableBytes) / 1_073_741_824
+        if gib >= 4.5 { return 4 }
+        if gib >= 3.0 { return 3 }
+        return 2
+    }()
+}
+#endif

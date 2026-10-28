@@ -14,6 +14,8 @@ final class InputManager: ObservableObject {
     @Published private(set) var hasGamepad = false
     private let motion = CMMotionManager()
     private var observers: [NSObjectProtocol] = []
+    /// Spatial accessories whose input handlers are set (visionOS 27); kept so the handlers live.
+    private var accessories: [AnyObject] = []
 
     private init() {}
 
@@ -22,21 +24,42 @@ final class InputManager: ObservableObject {
         observers.append(nc.addObserver(forName: .GCControllerDidConnect, object: nil, queue: .main) { [weak self] n in
             Task { @MainActor in self?.attach(n.object as? GCController) }
         })
-        observers.append(nc.addObserver(forName: .GCControllerDidDisconnect, object: nil, queue: .main) { [weak self] _ in
+        observers.append(nc.addObserver(forName: .GCControllerDidDisconnect, object: nil, queue: .main) { [weak self] n in
+            #if os(visionOS)
+            VisionDiag.log("controller disconnected: \((n.object as? GCController)?.vendorName ?? "?")")
+            #endif
             Task { @MainActor in self?.refreshGamepadState() }
         })
         observers.append(nc.addObserver(forName: .GCKeyboardDidConnect, object: nil, queue: .main) { [weak self] n in
             Task { @MainActor in self?.attachKeyboard((n.object as? GCKeyboard) ?? GCKeyboard.coalesced) }
         })
+        #if os(visionOS)
+        VisionDiag.log("game start: \(GCController.controllers().count) controller(s): \(GCController.controllers().map { $0.vendorName ?? "?" }.joined(separator: ", "))")
+        if #available(visionOS 27.0, *) {
+            VisionDiag.log("game start: \(GCSpatialAccessory.spatialAccessories.count) spatial accessory(ies): \(GCSpatialAccessory.spatialAccessories.map { $0.vendorName ?? "?" }.joined(separator: ", "))")
+            GCSpatialAccessory.spatialAccessories.forEach(attachAccessory)
+            observers.append(nc.addObserver(forName: .GCSpatialAccessoryDidConnect, object: nil, queue: .main) { [weak self] n in
+                guard let accessory = n.object as? GCSpatialAccessory else { return }
+                Task { @MainActor in self?.attachAccessory(accessory) }
+            })
+            observers.append(nc.addObserver(forName: .GCSpatialAccessoryDidDisconnect, object: nil, queue: .main) { n in
+                VisionDiag.log("spatial accessory disconnected: \((n.object as? GCSpatialAccessory)?.vendorName ?? "?")")
+            })
+        }
+        #endif
         GCController.controllers().forEach(attach)
         if let kb = GCKeyboard.coalesced { attachKeyboard(kb) }
         GCController.startWirelessControllerDiscovery {}
         refreshGamepadState()
+        #if !os(visionOS)
+        // The headset exposes no device motion or interface orientation to apps; motion
+        // controls there come from the controller's own gyro (not wired up yet).
         startMotion()
         updateOrientation()
         observers.append(nc.addObserver(forName: UIDevice.orientationDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.updateOrientation() }
         })
+        #endif
     }
 
     func stop() {
@@ -44,13 +67,28 @@ final class InputManager: ObservableObject {
         observers.removeAll()
         GCController.stopWirelessControllerDiscovery()
         motion.stopDeviceMotionUpdates()
+        #if os(visionOS)
+        detachMotion()
+        if #available(visionOS 27.0, *) {
+            for case let accessory as GCSpatialAccessory in accessories { accessory.input?.elementValueDidChangeHandler = nil }
+        }
+        accessories.removeAll()
+        #endif
         az_release_all_input()
     }
 
     private func refreshGamepadState() {
-        if !GCController.controllers().contains(where: { $0.extendedGamepad != nil }) {
+        if !GCController.controllers().contains(where: { $0.extendedGamepad != nil || Self.isSpatial($0) }) {
             hasGamepad = false
         }
+    }
+
+    private static func isSpatial(_ controller: GCController) -> Bool {
+        #if os(visionOS)
+        return controller.productCategory == GCProductCategorySpatialController
+        #else
+        return false
+        #endif
     }
 
     fileprivate func gamepadUsed() {
@@ -60,6 +98,15 @@ final class InputManager: ObservableObject {
     // MARK: Gamepads
 
     private func attach(_ controller: GCController?) {
+        #if os(visionOS)
+        if let controller {
+            VisionDiag.log("controller: \(controller.vendorName ?? "?") category=\(controller.productCategory) extended=\(controller.extendedGamepad != nil) motion=\(controller.motion != nil)")
+        }
+        if let controller, controller.productCategory == GCProductCategorySpatialController {
+            attachSpatial(controller)
+            return
+        }
+        #endif
         guard let pad = controller?.extendedGamepad else { return }
         controller?.playerIndex = .index1
         func bind(_ input: GCControllerButtonInput?, _ button: AZButton) {
@@ -86,8 +133,231 @@ final class InputManager: ObservableObject {
         bind(pad.dpad.right, AZ_BUTTON_RIGHT)
         pad.leftThumbstick.valueChangedHandler = { _, x, y in az_stick(AZ_STICK_CIRCLE_PAD, x, y) }
         pad.rightThumbstick.valueChangedHandler = { _, x, y in az_stick(AZ_STICK_C_STICK, x, y) }
+        #if os(visionOS)
+        if let controller {
+            if (controller.vendorName ?? "").contains("VR2 Sense") { remapSensePair(pad) }
+            // The system keeps the PS / Home button for itself (it never reached the app on the
+            // device), so holding Options / Menu leaves the game; a short press is still START.
+            pad.buttonMenu.pressedChangedHandler = Self.startWithExitHold()
+            pad.buttonHome?.pressedChangedHandler = { _, _, pressed in
+                if pressed { NotificationCenter.default.post(name: .bifoldExitGame, object: nil) }
+            }
+            attachMotion(controller)
+        }
+        #endif
         refreshGamepadState()
     }
+
+    #if os(visionOS)
+    /// The headset gives apps no device motion, so motion controls come from the controller's own
+    /// gyro and accelerometer (DualSense, DualShock 4, Switch Pro …).
+    ///
+    /// GameController reports them in the controller's frame: x to the right, y toward the bumpers,
+    /// z out of the face (Apple's device-frame convention, assumed here and logged on attach so a
+    /// device test can confirm it). Holding the pad flat should feel like holding a 3DS upright, so
+    /// the vector is turned 90° about x into the frame of a handheld standing upright and facing the
+    /// player, which the core takes as CoreMotion portrait (orientation 0).
+    private func attachMotion(_ controller: GCController) {
+        guard AppSettings.shared.motionControls, let motion = controller.motion else { return }
+        if motion.sensorsRequireManualActivation { motion.sensorsActive = true }
+        az_set_motion_orientation(0)
+        let name = controller.vendorName ?? "controller"
+        var logged = false
+        motion.valueChangedHandler = { m in
+            let a: GCAcceleration
+            if m.hasGravityAndUserAcceleration {
+                a = GCAcceleration(x: m.gravity.x + m.userAcceleration.x, y: m.gravity.y + m.userAcceleration.y,
+                                   z: m.gravity.z + m.userAcceleration.z)
+            } else {
+                a = m.acceleration
+            }
+            let r = m.hasRotationRate ? m.rotationRate : GCRotationRate(x: 0, y: 0, z: 0)
+            az_motion(Float(a.x), Float(a.z), Float(-a.y), Float(r.x), Float(r.z), Float(-r.y))
+            if !logged {
+                logged = true
+                VisionDiag.log(String(format: "motion: %@ gyro=%d gravity=(%.2f, %.2f, %.2f)", name, m.hasRotationRate ? 1 : 0, a.x, a.y, a.z))
+            }
+        }
+    }
+
+    private func detachMotion() {
+        for controller in GCController.controllers() {
+            controller.motion?.valueChangedHandler = nil
+            if controller.motion?.sensorsRequireManualActivation == true { controller.motion?.sensorsActive = false }
+        }
+    }
+    #endif
+
+    #if os(visionOS)
+    /// The PS VR2 Sense pair shows up as one extended gamepad ("PlayStation VR2 Sense Controllers
+    /// (L/R)", seen on the device). It has no d-pad, and with the left thumb on the stick the left
+    /// face buttons are hard to reach, so on top of the standard layout:
+    ///   R2 → Y (same as □: run / fireball), R1 → R, right stick → d-pad (ZR is not mapped).
+    private func remapSensePair(_ pad: GCExtendedGamepad) {
+        func bind(_ input: GCControllerButtonInput?, _ button: AZButton) {
+            input?.pressedChangedHandler = { _, _, pressed in
+                az_button(button, pressed)
+                if pressed { Task { @MainActor in InputManager.shared.gamepadUsed() } }
+            }
+        }
+        bind(pad.rightTrigger, AZ_BUTTON_Y)
+        bind(pad.rightShoulder, AZ_BUTTON_R)
+        pad.rightThumbstick.valueChangedHandler = Self.stickAsDpad()
+        VisionDiag.log("PS VR2 Sense pair: R2→Y, R1→R, right stick→d-pad")
+    }
+
+    /// START on press; held for 1.2 s it asks the game window to exit.
+    private static func startWithExitHold() -> GCControllerButtonValueChangedHandler {
+        var hold: Task<Void, Never>?
+        return { _, _, pressed in
+            az_button(AZ_BUTTON_START, pressed)
+            hold?.cancel()
+            hold = nil
+            guard pressed else { return }
+            Task { @MainActor in InputManager.shared.gamepadUsed() }
+            hold = Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(1200))
+                guard !Task.isCancelled else { return }
+                VisionDiag.log("exit: Options held")
+                NotificationCenter.default.post(name: .bifoldExitGame, object: nil)
+            }
+        }
+    }
+
+    /// A stick as a digital d-pad with a dead zone, so menus step one item at a time.
+    private static func stickAsDpad() -> GCControllerDirectionPadValueChangedHandler {
+        var held = Set<UInt32>()
+        return { _, x, y in
+            let threshold: Float = 0.5
+            var now = Set<UInt32>()
+            if y > threshold { now.insert(AZ_BUTTON_UP.rawValue) }
+            if y < -threshold { now.insert(AZ_BUTTON_DOWN.rawValue) }
+            if x < -threshold { now.insert(AZ_BUTTON_LEFT.rawValue) }
+            if x > threshold { now.insert(AZ_BUTTON_RIGHT.rawValue) }
+            for raw in now.symmetricDifference(held) {
+                az_button(AZButton(rawValue: raw), now.contains(raw))
+            }
+            if !now.isEmpty, held.isEmpty { Task { @MainActor in InputManager.shared.gamepadUsed() } }
+            held = now
+        }
+    }
+
+    /// A PS VR2 Sense controller that reaches the app only as a spatial accessory (visionOS 27):
+    /// the left one never showed up as a GCController in one device run while the right one did.
+    /// Same layout as attachSpatial, read through the accessory's physical input. Which hand comes
+    /// from the "(L)"/"(R)" in its name, else from its face buttons.
+    @available(visionOS 27.0, *)
+    private func attachAccessory(_ accessory: GCSpatialAccessory) {
+        guard let input = accessory.input else {
+            VisionDiag.log("spatial accessory without input: \(accessory.vendorName ?? "?")")
+            return
+        }
+        accessories.append(accessory)
+        let name = accessory.vendorName ?? ""
+        var right = name.contains("(R)")
+        var startHold: Task<Void, Never>?
+        var dpadHeld = Set<UInt32>()
+        var logged = false
+        input.elementValueDidChangeHandler = { _, element in
+            let aliases = element.aliases
+            func has(_ alias: String) -> Bool { aliases.contains(alias) }
+            if !name.contains("(L)"), !name.contains("(R)"), has("Button A") || has("Button B") { right = true }
+            if !logged {
+                logged = true
+                VisionDiag.log("spatial accessory input from \(name): \(aliases.sorted().joined(separator: ","))")
+            }
+            if let pad = element as? GCDirectionPadElement {
+                let v = pad.xyAxes.value
+                if right {
+                    let t: Float = 0.5
+                    var now = Set<UInt32>()
+                    if v.y > t { now.insert(AZ_BUTTON_UP.rawValue) }
+                    if v.y < -t { now.insert(AZ_BUTTON_DOWN.rawValue) }
+                    if v.x < -t { now.insert(AZ_BUTTON_LEFT.rawValue) }
+                    if v.x > t { now.insert(AZ_BUTTON_RIGHT.rawValue) }
+                    for raw in now.symmetricDifference(dpadHeld) { az_button(AZButton(rawValue: raw), now.contains(raw)) }
+                    dpadHeld = now
+                } else {
+                    az_stick(AZ_STICK_CIRCLE_PAD, v.x, v.y)
+                }
+                return
+            }
+            guard let button = element as? GCButtonElement else { return }
+            let pressed = button.pressedInput.isPressed
+            let target: AZButton?
+            if has("Button Menu") || has("Button Options") || has("Button Share") {
+                if right {
+                    az_button(AZ_BUTTON_START, pressed)
+                    startHold?.cancel()
+                    startHold = pressed ? Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(1200))
+                        guard !Task.isCancelled else { return }
+                        VisionDiag.log("exit: Options held (accessory)")
+                        NotificationCenter.default.post(name: .bifoldExitGame, object: nil)
+                    } : nil
+                    return
+                }
+                target = AZ_BUTTON_SELECT
+            } else if has("Button A") {
+                target = AZ_BUTTON_B
+            } else if has("Button B") {
+                target = AZ_BUTTON_A
+            } else if has("Button X") {
+                target = AZ_BUTTON_Y
+            } else if has("Button Y") {
+                target = AZ_BUTTON_X
+            } else if has("Trigger") {
+                target = right ? AZ_BUTTON_Y : AZ_BUTTON_L
+            } else if has("Grip") {
+                target = right ? AZ_BUTTON_R : AZ_BUTTON_ZL
+            } else {
+                target = nil
+            }
+            if let target {
+                az_button(target, pressed)
+                if pressed { Task { @MainActor in InputManager.shared.gamepadUsed() } }
+            }
+        }
+        VisionDiag.log("spatial accessory attached: \(name) as \(right ? "right" : "left")")
+    }
+
+    /// PlayStation VR2 Sense controllers connected one by one (each a "Spatial Controller"; seen
+    /// on the device when only the right one was on). No d-pad.
+    ///   left:  stick → circle pad, △ X, □ Y, trigger (L2) L, L1 ZL, create SELECT
+    ///   right: stick → d-pad, ○ A, ✕ B, trigger (R2) Y (= □, so skills need no left button),
+    ///          R1 R, options START (hold: exit game)
+    /// Which hand: the right one reports A/B (✕/○), the left one X/Y (□/△).
+    private func attachSpatial(_ controller: GCController) {
+        let profile = controller.physicalInputProfile
+        let isRight = profile.buttons[GCInputButtonA] != nil || profile.buttons[GCInputButtonB] != nil
+        func bind(_ name: String, _ button: AZButton) {
+            profile.buttons[name]?.pressedChangedHandler = { _, _, pressed in
+                az_button(button, pressed)
+                if pressed { Task { @MainActor in InputManager.shared.gamepadUsed() } }
+            }
+        }
+        if isRight {
+            bind(GCInputButtonB, AZ_BUTTON_A)
+            bind(GCInputButtonA, AZ_BUTTON_B)
+            bind(__GCInputButtonName.trigger.rawValue, AZ_BUTTON_Y)
+            bind(__GCInputButtonName.gripButton.rawValue, AZ_BUTTON_R)
+            profile.buttons[GCInputButtonMenu]?.pressedChangedHandler = Self.startWithExitHold()
+            profile.buttons[GCInputButtonOptions]?.pressedChangedHandler = Self.startWithExitHold()
+            profile.dpads[__GCInputDirectionPadName.thumbstick.rawValue]?.valueChangedHandler = Self.stickAsDpad()
+        } else {
+            bind(GCInputButtonY, AZ_BUTTON_X)
+            bind(GCInputButtonX, AZ_BUTTON_Y)
+            bind(__GCInputButtonName.trigger.rawValue, AZ_BUTTON_L)
+            bind(__GCInputButtonName.gripButton.rawValue, AZ_BUTTON_ZL)
+            bind(GCInputButtonShare, AZ_BUTTON_SELECT)
+            bind(GCInputButtonOptions, AZ_BUTTON_SELECT)
+            profile.dpads[__GCInputDirectionPadName.thumbstick.rawValue]?.valueChangedHandler = { _, x, y in
+                az_stick(AZ_STICK_CIRCLE_PAD, x, y)
+            }
+        }
+        VisionDiag.log("PS VR2 Sense (\(isRight ? "right" : "left")) buttons=\(profile.buttons.keys.sorted().joined(separator: ",")) dpads=\(profile.dpads.keys.sorted().joined(separator: ","))")
+    }
+    #endif
 
     private func attachKeyboard(_ keyboard: GCKeyboard?) {
         guard let kb = keyboard?.keyboardInput else { return }
@@ -114,6 +384,7 @@ final class InputManager: ObservableObject {
 
     // MARK: Motion
 
+    #if !os(visionOS)
     private func startMotion() {
         guard AppSettings.shared.motionControls, motion.isDeviceMotionAvailable else { return }
         motion.deviceMotionUpdateInterval = 1.0 / 60.0
@@ -135,4 +406,10 @@ final class InputManager: ObservableObject {
         default: az_set_motion_orientation(0)
         }
     }
+    #endif
+}
+
+extension Notification.Name {
+    /// A controller's PS / Home button: the game window closes the game (visionOS).
+    static let bifoldExitGame = Notification.Name("BifoldExitGame")
 }
