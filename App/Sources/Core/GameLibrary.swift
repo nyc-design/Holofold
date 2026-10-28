@@ -68,6 +68,8 @@ final class GameLibrary: ObservableObject {
     static let ciaExtensions: Set<String> = ["cia", "zcia"]
     static let installedFolderName = "已安装的 CIA"
     static let failedFolderName = "安装失败"
+    /// Files the player dumps from their own 3DS (GodMode9) so encrypted games can be decrypted.
+    static let keyFileNames: Set<String> = ["aes_keys.txt", "seeddb.bin"]
     static let importTypes: [UTType] = {
         var types: [UTType] = [.data]
         for ext in ["3ds", "cci", "cxi", "cia", "3dsx", "app", "elf", "zcci", "zcxi", "z3dsx", "zcia"] {
@@ -81,6 +83,9 @@ final class GameLibrary: ObservableObject {
     }
     nonisolated static var gamesDirectory: URL {
         documentsDirectory.appendingPathComponent("Games", isDirectory: true)
+    }
+    nonisolated static var sysdataDirectory: URL {
+        documentsDirectory.appendingPathComponent("Azahar/sysdata", isDirectory: true)
     }
     var gamesDirectory: URL { Self.gamesDirectory }
 
@@ -208,6 +213,29 @@ final class GameLibrary: ObservableObject {
     struct InstalledCIA { let name: String; let info: AZCIAInfo? }
     struct ImportReport { var installed: [InstalledCIA] = []; var failures: [String] = []; var pending = false }
 
+    /// Places a key file into Azahar/sysdata (replacing an older one) and reloads the keys.
+    @discardableResult
+    nonisolated static func installKeyFile(_ url: URL, move: Bool) -> Bool {
+        let fm = FileManager.default
+        let dest = sysdataDirectory.appendingPathComponent(url.lastPathComponent.lowercased())
+        try? fm.createDirectory(at: sysdataDirectory, withIntermediateDirectories: true)
+        try? fm.removeItem(at: dest)
+        do {
+            if move { try fm.moveItem(at: url, to: dest) } else { try fm.copyItem(at: url, to: dest) }
+        } catch {
+            return false
+        }
+        az_reload_keys()
+        // CIAs that failed before the keys arrived (most likely because they are encrypted) get
+        // another try: back into Games/, where the next step picks them up.
+        let failed = gamesDirectory.appendingPathComponent(failedFolderName, isDirectory: true)
+        for cia in (try? fm.contentsOfDirectory(at: failed, includingPropertiesForKeys: nil)) ?? []
+        where ciaExtensions.contains(cia.pathExtension.lowercased()) {
+            GameLibrary.move(cia, into: gamesDirectory)
+        }
+        return true
+    }
+
     /// Shows a banner for a few seconds; a new message while one is visible is appended.
     func post(_ text: String) {
         var lines = (notice.map { $0.components(separatedBy: "\n") } ?? []) + text.components(separatedBy: "\n")
@@ -276,7 +304,11 @@ final class GameLibrary: ObservableObject {
                                                      options: [.skipsHiddenFiles])) ?? []
         for url in rootItems where (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true {
             let ext = url.pathExtension.lowercased()
-            if ciaExtensions.contains(ext) {
+            if keyFileNames.contains(url.lastPathComponent.lowercased()) {
+                // Keys are only swapped while no game runs.
+                if isStillArriving(url) || !canInstall { report.pending = true; continue }
+                installKeyFile(url, move: true)
+            } else if ciaExtensions.contains(ext) {
                 cias.append(url)
             } else if romExtensions.contains(ext) {
                 if isStillArriving(url) { report.pending = true; continue }
@@ -404,7 +436,10 @@ final class GameLibrary: ObservableObject {
                 let scoped = url.startAccessingSecurityScopedResource()
                 defer { if scoped { url.stopAccessingSecurityScopedResource() } }
                 let ext = url.pathExtension.lowercased()
-                if GameLibrary.ciaExtensions.contains(ext) {
+                if GameLibrary.keyFileNames.contains(url.lastPathComponent.lowercased()) {
+                    let ok = GameLibrary.installKeyFile(url, move: false)
+                    messages.append(ok ? "已导入 \(url.lastPathComponent)" : "导入失败 \(url.lastPathComponent)")
+                } else if GameLibrary.ciaExtensions.contains(ext) {
                     var info = AZCIAInfo()
                     let hasInfo = az_get_cia_info(url.path, &info)
                     let name = url.lastPathComponent
@@ -463,7 +498,7 @@ final class GameLibrary: ObservableObject {
 
     nonisolated static func ciaError(_ code: Int32) -> String {
         switch code {
-        case 2: return "内容已加密。Azahar 只能安装解密过的 CIA，请先在自己的 3DS 上用 GodMode9 等工具解密"
+        case 2: return "内容已加密。请把从自己的 3DS 导出的 aes_keys.txt（以及 seeddb.bin）放进 Azahar › sysdata 后重试"
         case 3: return "文件无效"
         case 4: return "找不到文件"
         case 5: return "已取消"

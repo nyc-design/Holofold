@@ -32,6 +32,7 @@ echo "==> Patches"
 apply_patch "$SRC"                                   "$ROOT/patches/azahar/0001-ios-frontend-support.patch"
 apply_patch "$SRC"                                   "$ROOT/patches/azahar/0002-visionos.patch"
 apply_patch "$SRC"                                   "$ROOT/patches/azahar/0003-visionos-offscreen-presentation.patch"
+apply_patch "$SRC"                                   "$ROOT/patches/azahar/0004-user-key-decryption.patch"
 apply_patch "$SRC/externals/openal-soft"             "$ROOT/patches/openal-soft/0001-visionos.patch"
 apply_patch "$SRC/externals/dynarmic"                "$ROOT/patches/dynarmic/0001-ios-dual-mapped-jit.patch"
 # Azahar builds its own externals/oaknut (dynarmic then skips its bundled copy); patch both so
