@@ -1,0 +1,32 @@
+// Holofold (visionOS) build configuration.
+//
+// Personal values (your Team ID, your bundle ID …) go in App/Config/Local.xcconfig, which is not
+// committed: copy Local.xcconfig.example to Local.xcconfig and edit it. Anything set there
+// overrides the defaults below.
+
+// Signing. Pick your team here or in Xcode's Signing & Capabilities. A free Apple ID works.
+DEVELOPMENT_TEAM =
+// Must be unique to you, e.g. com.yourname.holofold (the example ID will not sign).
+HOLOFOLD_BUNDLE_ID = com.example.holofold
+// YES only with a paid developer account (Increased Memory Limit entitlement).
+HOLOFOLD_INCREASED_MEMORY = NO
+
+// Boot: title ID (16 hex digits) or file name of the game to start; empty = your first game.
+HOLOFOLD_AUTOBOOT_TITLE_ID =
+// Resume from the auto-save made when you last left the game.
+HOLOFOLD_AUTO_RESUME = YES
+
+// App icon asset name; empty = no icon (the system shows a blank one).
+HOLOFOLD_APPICON =
+// Extra Swift compilation conditions.
+HOLOFOLD_SWIFT_CONDITIONS =
+
+// Derived settings — no need to change these.
+PRODUCT_BUNDLE_IDENTIFIER = $(HOLOFOLD_BUNDLE_ID)
+HOLOFOLD_ENTITLEMENTS_NO = App/Config/Vision.entitlements
+HOLOFOLD_ENTITLEMENTS_YES = App/Config/Vision-IncreasedMemory.entitlements
+CODE_SIGN_ENTITLEMENTS = $(HOLOFOLD_ENTITLEMENTS_$(HOLOFOLD_INCREASED_MEMORY))
+ASSETCATALOG_COMPILER_APPICON_NAME = $(HOLOFOLD_APPICON)
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) $(HOLOFOLD_SWIFT_CONDITIONS)
+
+#include? "Local.xcconfig"

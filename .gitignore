@@ -12,3 +12,24 @@ Server/lobby/data/
 *.cci
 *.cxi
 *.zcia
+
+# --- Holofold: never publish game data, keys or console files ---
+*.z3ds
+*.zcci
+*.zcxi
+aes_keys*.txt
+seeddb*.bin
+boot9*.bin
+boot11*.bin
+movable.sed
+otp.bin
+secret_sectors.bin
+*.sav
+# Personal signing and device data
+App/Config/Local.xcconfig
+*.ips
+vision-diag*.log
+hang-*.txt
+azahar_log*.txt
+# Private material that ends up inside the repo by mistake
+/private/

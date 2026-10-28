@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+  Used when HOLOFOLD_INCREASED_MEMORY = YES (App/Config/Holofold.xcconfig / Local.xcconfig).
+  Increased Memory Limit gives the app considerably more memory, which high internal resolutions
+  and stereo rendering benefit from. It needs a paid Apple Developer account; with a free account
+  keep HOLOFOLD_INCREASED_MEMORY = NO (the default resolution then follows available memory).
+-->
+<dict>
+	<key>com.apple.developer.kernel.increased-memory-limit</key>
+	<true/>
+</dict>
+</plist>

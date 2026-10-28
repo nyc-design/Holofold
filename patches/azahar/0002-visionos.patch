@@ -1,0 +1,59 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 502fafb..f635573 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -22,9 +22,13 @@ include(DownloadExternals)
+ include(CMakeDependentOption)
+ 
+ project(citra LANGUAGES C CXX ASM)
++# visionOS (Bifold): reuse every iOS code path; CMake only sets VISIONOS for this system.
++if (CMAKE_SYSTEM_NAME STREQUAL "visionOS")
++    set(IOS TRUE)
++endif()
+ # must be invoked after project() command when using CMAKE_TOOLCHAIN_FILE
+ include(FindPkgConfig)
+-if (CMAKE_SYSTEM_NAME STREQUAL "Darwin" OR CMAKE_SYSTEM_NAME STREQUAL "iOS")
++if (CMAKE_SYSTEM_NAME STREQUAL "Darwin" OR CMAKE_SYSTEM_NAME STREQUAL "iOS" OR CMAKE_SYSTEM_NAME STREQUAL "visionOS")
+     enable_language(OBJC OBJCXX)
+ endif()
+ 
+@@ -53,8 +57,12 @@ if (APPLE AND NOT ENABLE_LIBRETRO)
+     set(CMAKE_CXX_ARCHIVE_FINISH "<CMAKE_RANLIB> -no_warning_for_no_symbols -c <TARGET>")
+ 
+     if (IOS)
+-        # Minimum iOS 14
+-        set(CMAKE_OSX_DEPLOYMENT_TARGET "14.0")
++        if (CMAKE_SYSTEM_NAME STREQUAL "visionOS")
++            set(CMAKE_OSX_DEPLOYMENT_TARGET "2.0")
++        else()
++            # Minimum iOS 14
++            set(CMAKE_OSX_DEPLOYMENT_TARGET "14.0")
++        endif()
+ 
+         # Enable searching CMAKE_PREFIX_PATH for bundled dependencies.
+         set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY BOTH)
+@@ -433,7 +441,9 @@ if (APPLE)
+             find_library(MOLTENVK_LIBRARY MoltenVK REQUIRED)
+         else()
+             download_moltenvk()
+-            if (IOS)
++            if (CMAKE_SYSTEM_NAME STREQUAL "visionOS")
++                set(MOLTENVK_RELATIVE_LIBPATH "static/MoltenVK.xcframework/xros-arm64/libMoltenVK.a")
++            elseif (IOS)
+                 set(MOLTENVK_RELATIVE_LIBPATH "static/MoltenVK.xcframework/ios-arm64/libMoltenVK.a")
+             else()
+                 set(MOLTENVK_RELATIVE_LIBPATH "dynamic/dylib/macOS/libMoltenVK.dylib")
+diff --git a/src/common/apple_utils.mm b/src/common/apple_utils.mm
+index d513107..0b812e3 100644
+--- a/src/common/apple_utils.mm
++++ b/src/common/apple_utils.mm
+@@ -28,6 +28,9 @@ float GetRefreshRate() { // TODO: How does this handle multi-monitor? -OS
+             return refreshRate;
+         }
+     }
++#elif TARGET_OS_VISION
++    // visionOS has no UIScreen; Apple Vision Pro renders at 90 Hz by default.
++    return 90;
+ #else
+     // iOS: ProMotion devices report 120. UIScreen is safe to query from any thread for this.
+     const NSInteger fps = UIScreen.mainScreen.maximumFramesPerSecond;

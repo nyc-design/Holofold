@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+  Default Holofold entitlements: none, so the app signs with a free Apple ID (Personal Team).
+  Development signing adds get-task-allow by itself, which optional JIT helpers rely on.
+  See Vision-IncreasedMemory.entitlements for paid accounts.
+-->
+<dict/>
+</plist>

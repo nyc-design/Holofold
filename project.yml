@@ -1,11 +1,13 @@
-# XcodeGen spec — run `xcodegen generate` (brew install xcodegen) to create Bifold.xcodeproj.
-# Build the emulation core first: ./scripts/build-core-ios.sh  (see README.md)
+# XcodeGen spec — run `xcodegen generate` (brew install xcodegen) to create Holofold.xcodeproj.
+# Build the emulation core first: ./scripts/build-core-ios.sh --sdk xros  (see README.md)
+# Holofold is a fork of Bifold; the iOS target keeps Bifold's name and settings.
 
-name: Bifold
+name: Holofold
 options:
   bundleIdPrefix: com.example
   deploymentTarget:
     iOS: "16.0"
+    visionOS: "26.0"  # PS VR2 Sense controllers (GCProductCategorySpatialController)
   createIntermediateGroups: true
   developmentLanguage: zh-Hans
 
@@ -96,11 +98,89 @@ targets:
             exit 1
           fi
 
+  # Holofold for Apple Vision Pro. Shares every source with the iOS app; visionOS-only code sits
+  # behind #if os(visionOS). Signing, bundle ID, entitlements, icon and compile conditions come
+  # from App/Config/Holofold.xcconfig, which includes your own App/Config/Local.xcconfig if present
+  # (they are not set here: target settings in the project would override the xcconfig).
+  Holofold:
+    type: application
+    platform: visionOS
+    configFiles:
+      Debug: App/Config/Holofold.xcconfig
+      Release: App/Config/Holofold.xcconfig
+      AppStore: App/Config/Holofold.xcconfig
+    sources:
+      - path: App/Sources
+      - path: App/Resources
+      - path: App/Bundled
+        type: folder
+      - path: Core/include
+        buildPhase: none
+      # Optional private app shell (launcher UI), never part of the public repository; only
+      # compiled with HOLOFOLD_FULL_SHELL. Absent in a public checkout.
+      - path: ../private/app-shell
+        optional: true
+    settings:
+      base:
+        INFOPLIST_FILE: App/Config/Info-visionOS.plist   # multiple scenes: the stereo game uses two windows
+        PRODUCT_NAME: Holofold
+        PRODUCT_DISPLAY_NAME: Holofold
+        TARGETED_DEVICE_FAMILY: "7"
+        SUPPORTED_PLATFORMS: "xros xrsimulator"
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        ARCHS: arm64
+        ONLY_ACTIVE_ARCH: NO
+        SWIFT_INCLUDE_PATHS: $(SRCROOT)/Core/include
+        HEADER_SEARCH_PATHS: $(SRCROOT)/Core/include
+        AZ_FLAVOR: sideload
+        LIBRARY_SEARCH_PATHS: $(SRCROOT)/build/xros-$(AZ_FLAVOR)/lib
+        LIBRARY_SEARCH_PATHS[sdk=xrsimulator*]: $(SRCROOT)/build/xros-sim-$(AZ_FLAVOR)/lib
+        OTHER_LDFLAGS:
+          - -lAzaharCore
+          - -lc++
+          - -lz
+          - -liconv
+          - -framework Metal
+          - -framework QuartzCore
+          - -framework IOSurface
+          - -framework AVFoundation
+          - -framework AudioToolbox
+          - -framework CoreAudio
+          - -framework CoreMotion
+          - -framework GameController
+          - -framework Network
+          - -framework CoreFoundation
+        LD_RUNPATH_SEARCH_PATHS: ["$(inherited)", "@executable_path/Frameworks"]
+        DEAD_CODE_STRIPPING: YES
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+    dependencies:
+      - framework: build/MoltenVK/MoltenVK.xcframework
+        embed: true
+        codeSign: true
+    preBuildScripts:
+      - name: Check AzaharCore
+        basedOnDependencyAnalysis: false
+        script: |
+          if [ "$PLATFORM_NAME" = "xrsimulator" ]; then DIR=xros-sim; SDKARG="--sdk xrsimulator"; else DIR=xros; SDKARG="--sdk xros"; fi
+          LIB="${SRCROOT}/build/${DIR}-${AZ_FLAVOR}/lib/libAzaharCore.a"
+          if [ ! -f "$LIB" ]; then
+            echo "error: $LIB not found. Run: ./scripts/build-core-ios.sh --flavor ${AZ_FLAVOR} ${SDKARG}"
+            exit 1
+          fi
+
 schemes:
   Bifold:
     build:
       targets:
         Bifold: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+  Holofold:
+    build:
+      targets:
+        Holofold: all
     run:
       config: Debug
     archive:

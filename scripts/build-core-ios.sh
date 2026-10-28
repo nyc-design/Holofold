@@ -5,6 +5,8 @@
 #   ./scripts/build-core-ios.sh                    # sideload flavour (JIT allowed), device
 #   ./scripts/build-core-ios.sh --flavor appstore  # App Store flavour (no JIT, no built-in keys)
 #   ./scripts/build-core-ios.sh --sdk simulator    # arm64 iOS Simulator (Apple silicon Macs)
+#   ./scripts/build-core-ios.sh --sdk xros         # Apple Vision Pro (visionOS device)
+#   ./scripts/build-core-ios.sh --sdk xrsimulator  # visionOS Simulator
 #
 # Requirements (macOS): Xcode 16+, CMake ≥ 3.25, Ninja  →  brew install cmake ninja
 set -euo pipefail
@@ -24,15 +26,19 @@ while [ $# -gt 0 ]; do
   esac
 done
 case "$FLAVOR" in sideload|appstore) ;; *) echo "flavor must be sideload or appstore" >&2; exit 2 ;; esac
+SYSTEM=iOS
+PREFIX=ios
 case "$SDK" in
   device) SYSROOT=iphoneos; SUFFIX="" ;;
   simulator) SYSROOT=iphonesimulator; SUFFIX="-sim" ;;
-  *) echo "sdk must be device or simulator" >&2; exit 2 ;;
+  xros) SYSTEM=visionOS; SYSROOT=xros; PREFIX=xros; SUFFIX="" ;;
+  xrsimulator) SYSTEM=visionOS; SYSROOT=xrsimulator; PREFIX=xros; SUFFIX="-sim" ;;
+  *) echo "sdk must be device, simulator, xros or xrsimulator" >&2; exit 2 ;;
 esac
 
 [ -d "$SRC/src/azios" ] || "$ROOT/scripts/bootstrap.sh"
 
-BUILD="$ROOT/build/ios$SUFFIX-$FLAVOR"
+BUILD="$ROOT/build/$PREFIX$SUFFIX-$FLAVOR"
 # Azahar's built-in AES key blob is never compiled in: Bifold ships no Nintendo keys. Players who
 # need them (encrypted content, some wireless features, amiibo) import aes_keys.txt from their
 # own console; see the in-app help (设置 › 主机与系统文件 › 密钥).
@@ -45,7 +51,7 @@ fi
 
 echo "==> Configuring ($FLAVOR, $SDK)"
 cmake -S "$SRC" -B "$BUILD/cmake" -G Ninja \
-  -DCMAKE_SYSTEM_NAME=iOS \
+  -DCMAKE_SYSTEM_NAME="$SYSTEM" \
   -DCMAKE_OSX_SYSROOT="$SYSROOT" \
   -DCMAKE_OSX_ARCHITECTURES=arm64 \
   -DCMAKE_BUILD_TYPE=Release \
@@ -76,6 +82,7 @@ if [ ! -d "$MVK" ]; then
   MVK="$(find "$BUILD/cmake/externals" -type d -path '*dynamic/MoltenVK.xcframework' | head -n1)"
 fi
 [ -d "$MVK" ] || { echo "error: MoltenVK dynamic xcframework not found under $BUILD/cmake/externals" >&2; exit 1; }
+# One xcframework serves every platform (it holds ios, ios-simulator, xros, xros-simulator slices).
 mkdir -p "$ROOT/build/MoltenVK"
 rm -rf "$ROOT/build/MoltenVK/MoltenVK.xcframework"
 cp -R "$MVK" "$ROOT/build/MoltenVK/"

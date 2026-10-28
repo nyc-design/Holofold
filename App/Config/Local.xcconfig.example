@@ -1,0 +1,13 @@
+// Copy to App/Config/Local.xcconfig (never committed) and fill in your own values.
+// They override App/Config/Holofold.xcconfig.
+
+// Your team: Xcode › Settings › Accounts › your Apple ID › Team ("Personal Team" for a free account).
+DEVELOPMENT_TEAM = ABCDE12345
+// Unique to you.
+HOLOFOLD_BUNDLE_ID = com.yourname.holofold
+// YES only with a paid developer account.
+HOLOFOLD_INCREASED_MEMORY = NO
+
+// Optional: which game to boot (16-digit title ID or file name); empty = your first game.
+// HOLOFOLD_AUTOBOOT_TITLE_ID =
+// HOLOFOLD_AUTO_RESUME = YES

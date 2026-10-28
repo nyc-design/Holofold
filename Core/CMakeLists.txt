@@ -11,6 +11,7 @@ add_library(azios STATIC
     src/az_jit.cpp
     src/az_keyboard.cpp
     src/az_multiplayer.cpp
+    src/az_offscreen.cpp
     src/az_window.cpp
 )
 
