@@ -1389,6 +1389,21 @@ void az_set_console_username(const char* name) {
     cfg->UpdateConfigNANDSavegame();
 }
 
+int az_get_console_language(void) {
+    auto cfg = std::make_shared<Service::CFG::Module>(Core::System::GetInstance());
+    return static_cast<int>(cfg->GetSystemLanguage());
+}
+
+void az_set_console_language(int language) {
+    auto& system = Core::System::GetInstance();
+    if (system.IsPoweredOn() || language < 0 || language > Service::CFG::LANGUAGE_TW) {
+        return; // only change the config savegame while no game is running
+    }
+    auto cfg = std::make_shared<Service::CFG::Module>(system);
+    cfg->SetSystemLanguage(static_cast<Service::CFG::SystemLanguage>(language));
+    cfg->UpdateConfigNANDSavegame();
+}
+
 } // extern "C"
 
 int64_t az_debug_console_clock_offset_ms(void) {

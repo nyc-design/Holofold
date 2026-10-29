@@ -121,11 +121,14 @@ final class StereoFrameSource {
             do {
                 // Mipmapped: the panel usually shows the frame smaller than its pixel size, and
                 // sampling level 0 alone shimmers there.
+                // sRGB: the core writes gamma-encoded colors (as for a UNORM swapchain). Sampled as
+                // plain UNORM, RealityKit took them for linear values and the picture looked
+                // washed out.
                 let levels = Int(log2(Double(max(source.width, source.height)))) + 1
                 let texture = try LowLevelTexture(descriptor: .init(
-                    textureType: .type2D, pixelFormat: source.pixelFormat,
+                    textureType: .type2D, pixelFormat: Self.srgb(source.pixelFormat),
                     width: source.width, height: source.height, depth: 1,
-                    mipmapLevelCount: levels, textureUsage: [.shaderRead, .shaderWrite]))
+                    mipmapLevelCount: levels, textureUsage: [.shaderRead, .shaderWrite, .pixelFormatView]))
                 stereoTexture = texture
                 stereoResource = try TextureResource(from: texture)
                 VisionDiag.log("stereo: frame texture \(source.width)x\(source.height) format \(source.pixelFormat.rawValue)")
@@ -141,11 +144,15 @@ final class StereoFrameSource {
             return
         }
         let destination = target.replace(using: commands)
+        // Blit the raw bytes through a view in the source's format; mipmaps are generated on the
+        // sRGB texture itself so they are filtered in linear space.
+        let copyTarget = destination.pixelFormat == source.pixelFormat
+            ? destination : (destination.makeTextureView(pixelFormat: source.pixelFormat) ?? destination)
         if let blit = commands.makeBlitCommandEncoder() {
             blit.copy(from: source, sourceSlice: 0, sourceLevel: 0,
                       sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
                       sourceSize: MTLSize(width: source.width, height: source.height, depth: 1),
-                      to: destination, destinationSlice: 0, destinationLevel: 0,
+                      to: copyTarget, destinationSlice: 0, destinationLevel: 0,
                       destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0))
             if destination.mipmapLevelCount > 1 { blit.generateMipmaps(for: destination) }
             blit.endEncoding()
@@ -174,7 +181,7 @@ final class StereoFrameSource {
             }
             if softwareTextures[screen].map({ $0.descriptor.width != Int(sw) || $0.descriptor.height != Int(sh) }) ?? true {
                 guard let texture = try? LowLevelTexture(descriptor: .init(
-                    textureType: .type2D, pixelFormat: .rgba8Unorm, width: Int(sw), height: Int(sh),
+                    textureType: .type2D, pixelFormat: .rgba8Unorm_srgb, width: Int(sw), height: Int(sh),
                     depth: 1, mipmapLevelCount: 1, textureUsage: [.shaderRead, .shaderWrite])) else { continue }
                 softwareTextures[screen] = texture
                 softwareResources[screen] = try? TextureResource(from: texture)
@@ -194,6 +201,15 @@ final class StereoFrameSource {
             commands.commit()
         }
         if changed { publish() }
+    }
+
+    /// The sRGB variant of an 8-bit color format (unchanged if there is none).
+    private static func srgb(_ format: MTLPixelFormat) -> MTLPixelFormat {
+        switch format {
+        case .bgra8Unorm: return .bgra8Unorm_srgb
+        case .rgba8Unorm: return .rgba8Unorm_srgb
+        default: return format
+        }
     }
 }
 #endif

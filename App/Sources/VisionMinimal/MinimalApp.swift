@@ -26,6 +26,12 @@ struct HolofoldApp: App {
         .restorationBehavior(.disabled)
 
         VisionGameScenes()
+
+        WindowGroup(id: VisionWindowID.settings) {
+            VisionSettingsView()
+        }
+        .defaultSize(width: 600, height: 760)
+        .restorationBehavior(.disabled)
     }
 }
 
@@ -115,6 +121,13 @@ private struct BootView: View {
                 Text("Holofold").font(.largeTitle.bold())
                 Spacer()
                 if library.isScanning { ProgressView().controlSize(.small) }
+                Button {
+                    openWindow(id: VisionWindowID.settings)
+                } label: {
+                    Label("Settings", systemImage: "gearshape")
+                }
+                .labelStyle(.iconOnly)
+                .help("Settings")
             }
             .padding([.horizontal, .top], 28)
             .padding(.bottom, 8)

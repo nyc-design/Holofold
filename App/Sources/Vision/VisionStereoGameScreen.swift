@@ -14,6 +14,8 @@ enum VisionWindowID {
     static let game = "holofold-game"
     /// The bottom screen in its own small window, placed under the game window.
     static let touch = "holofold-touch"
+    /// Emulator settings (game list and in-game control bar).
+    static let settings = "holofold-settings"
     static let touchValue = "touch"
 }
 
@@ -450,6 +452,11 @@ struct VisionGameWindow: View {
             }
             .toggleStyle(.button)
             .help("Wrap the top screen around you")
+            Toggle(isOn: $core.isFastForward) {
+                Label("Turbo", systemImage: "forward.fill")
+            }
+            .toggleStyle(.button)
+            .help("Run at \(AppSettings.shared.fastForwardSpeed)% (Settings › Turbo Speed)")
             Text(String(format: "%.0f fps · %.0f%%", core.perf.game_fps, core.perf.emulation_speed * 100))
                 .font(.callout.monospacedDigit())
                 .foregroundStyle(.secondary)
@@ -459,6 +466,13 @@ struct VisionGameWindow: View {
                 Label("Bottom Screen", systemImage: "rectangle.bottomhalf.inset.filled")
             }
             .help("Reopen the bottom screen window")
+            Button {
+                openWindow(id: VisionWindowID.settings)
+            } label: {
+                Label("Settings", systemImage: "gearshape")
+            }
+            .labelStyle(.iconOnly)
+            .help("Settings")
             Button(role: .destructive) {
                 requestExit()
             } label: {

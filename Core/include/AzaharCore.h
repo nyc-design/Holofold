@@ -335,6 +335,11 @@ void az_set_keyboard_callback(AZKeyboardCallback cb, void* ctx);
 char* az_get_console_username(void);
 void az_set_console_username(const char* name);
 
+/// The emulated console's system language (0 JP, 1 EN, 2 FR, 3 DE, 4 IT, 5 ES, 6 ZH-Hans, 7 KO,
+/// 8 NL, 9 PT, 10 RU, 11 ZH-Hant). Setting it is ignored while a game runs.
+int az_get_console_language(void);
+void az_set_console_language(int language);
+
 // ---------------------------------------------------------------------------------------------
 // Multiplayer (Azahar/Citra room protocol — emulates 3DS local wireless over the internet/LAN)
 // ---------------------------------------------------------------------------------------------

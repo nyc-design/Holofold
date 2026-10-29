@@ -129,6 +129,15 @@ final class AppSettings: ObservableObject {
     @AppStorage("isNew3DS") var isNew3DS = true { willSet { objectWillChange.send() } }
     @AppStorage("region") var region = -1 { willSet { objectWillChange.send() } }
     @AppStorage("lleApplets") var lleApplets = false { willSet { objectWillChange.send() } }
+    /// Console clock: the real time (default) or a fixed start time the clock runs from.
+    @AppStorage("consoleClockFixed") var consoleClockFixed = false { willSet { objectWillChange.send() } }
+    @AppStorage("consoleFixedTime") var consoleFixedTime = Date().timeIntervalSince1970 { willSet { objectWillChange.send() } }
+    /// Azahar counts console time from 2000-01-01 00:00 local *standard* time, so a moment in
+    /// daylight saving time needs that hour added to show on the console as picked.
+    var consoleInitTime: Int64 {
+        let date = Date(timeIntervalSince1970: consoleFixedTime)
+        return Int64(consoleFixedTime + TimeZone.current.daylightSavingTimeOffset(for: date))
+    }
 
     // MARK: Controls
     @AppStorage("controllerOpacity") var controllerOpacity = 0.75 { willSet { objectWillChange.send() } }
@@ -212,6 +221,8 @@ final class AppSettings: ObservableObject {
         is_new_3ds = \(isNew3DS)
         lle_applets = \(lleApplets)
         region_value = \(region)
+        init_clock = \(consoleClockFixed ? 1 : 0)
+        init_time = \(consoleInitTime)
 
         [Data Storage]
         use_virtual_sd = true
