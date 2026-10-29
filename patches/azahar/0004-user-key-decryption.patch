@@ -381,10 +381,22 @@ index 6025821..d9f6c8d 100644
          std::vector<u8> buffer;
          buffer.resize(0x10000);
 diff --git a/src/core/hw/aes/key.cpp b/src/core/hw/aes/key.cpp
-index b9d90eb..f47c403 100644
+index b9d90eb..0a72d33 100644
 --- a/src/core/hw/aes/key.cpp
 +++ b/src/core/hw/aes/key.cpp
-@@ -289,6 +289,19 @@ void LoadPresetKeys() {
+@@ -34,7 +34,10 @@ namespace {
+ // On a real 3DS the generation for the normal key is hardware based, and thus the constant can't
+ // get dumped. Generated normal keys are also not accessible on a 3DS. The used formula for
+ // calculating the constant is a software implementation of what the hardware generator does.
+-AESKey generator_constant;
++// Holofold: defaults to the public value Citra shipped, so Citra-style aes_keys.txt files (which
++// carry no generatorConstant line) work. A key file can still override it.
++AESKey generator_constant = {{0x1F, 0xF9, 0xE9, 0xAA, 0xC5, 0xFE, 0x04, 0x08, 0x02, 0x45, 0x91,
++                              0xDC, 0x5D, 0x52, 0x76, 0x8A}};
+ 
+ AESKey HexToKey(const std::string& hex) {
+     if (hex.size() < 32) {
+@@ -289,6 +292,19 @@ void LoadPresetKeys() {
  
  } // namespace
  
@@ -404,7 +416,7 @@ index b9d90eb..f47c403 100644
  std::istringstream GetKeysStream() {
      const std::string filepath = FileUtil::GetUserPath(FileUtil::UserPath::SysDataDir) + KEYS_FILE;
      FileUtil::CreateFullPath(filepath); // Create path if not already created
-@@ -297,7 +310,10 @@ std::istringstream GetKeysStream() {
+@@ -297,7 +313,10 @@ std::istringstream GetKeysStream() {
      FileUtil::OpenFStream<std::ios_base::in>(file, filepath);
      std::istringstream ret;
      if (file.is_open()) {
