@@ -22,6 +22,7 @@ struct VisionSettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                controls
                 graphics
                 speed
                 audio
@@ -44,6 +45,16 @@ struct VisionSettingsView: View {
     }
 
     // MARK: Sections
+
+    private var controls: some View {
+        Section("Controls") {
+            NavigationLink {
+                VisionControllerSettingsView()
+            } label: {
+                Label("Controller Mapping & Hotkeys", systemImage: "gamecontroller")
+            }
+        }
+    }
 
     private var graphics: some View {
         Section {
@@ -82,7 +93,7 @@ struct VisionSettingsView: View {
         } header: {
             Text("Speed")
         } footer: {
-            Text("Turbo is toggled from the control bar above the game. The automatic CPU clock is \(s.effectiveCPUClock)% here; lowering it can speed up demanding games, raising it can smooth out games that drop frames on real hardware.")
+            Text("Turbo is toggled from the control bar above the game or with a controller hotkey. The automatic CPU clock is \(s.effectiveCPUClock)% here; lowering it can speed up demanding games, raising it can smooth out games that drop frames on real hardware.")
         }
     }
 

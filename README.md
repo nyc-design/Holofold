@@ -132,6 +132,8 @@ Leaving a game brings the list back. To skip the list and boot one game directly
 
 The PS button and the Xbox / Home button are reserved by visionOS and don't reach the app.
 
+The table is the default for standard controllers. **Settings › Controller Mapping & Hotkeys** remaps every button, sets what each stick and the d-pad drive, and configures hotkeys: hold the hotkey button (default SELECT) and press R (quick save, slot 1), L (quick load), ZR (turbo), ZL (pause) or START (exit). Tapped on its own, the hotkey button is still SELECT.
+
 ## Configuration
 
 Build settings (in `App/Config/Local.xcconfig`):
@@ -183,7 +185,7 @@ Remove personal paths from the logs before posting them in an issue.
 - tracking down the freeze (interpreter correctness, HLE services)
 - performance and frame pacing (60 fps content on a 90 Hz display)
 - an immersive mode (Compositor Services) and better curved-screen geometry
-- controller remapping, haptics
+- haptics
 - localization, documentation, testing on M2 headsets
 
 How to contribute:

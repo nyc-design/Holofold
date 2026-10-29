@@ -20,6 +20,8 @@ final class InputManager: ObservableObject {
     private init() {}
 
     func start() {
+        GamepadRouter.active = true
+        _ = ControllerMapping.shared // loads the saved mapping into ControllerMapping.live
         let nc = NotificationCenter.default
         observers.append(nc.addObserver(forName: .GCControllerDidConnect, object: nil, queue: .main) { [weak self] n in
             Task { @MainActor in self?.attach(n.object as? GCController) }
@@ -63,6 +65,7 @@ final class InputManager: ObservableObject {
     }
 
     func stop() {
+        GamepadRouter.active = false
         observers.forEach(NotificationCenter.default.removeObserver)
         observers.removeAll()
         GCController.stopWirelessControllerDiscovery()
@@ -107,45 +110,81 @@ final class InputManager: ObservableObject {
             return
         }
         #endif
-        guard let pad = controller?.extendedGamepad else { return }
-        controller?.playerIndex = .index1
-        func bind(_ input: GCControllerButtonInput?, _ button: AZButton) {
-            input?.pressedChangedHandler = { _, _, pressed in
-                az_button(button, pressed)
-                if pressed { Task { @MainActor in InputManager.shared.gamepadUsed() } }
-            }
-        }
-        // Nintendo layout by position: the east face button is A, like on a real 3DS.
-        bind(pad.buttonB, AZ_BUTTON_A)
-        bind(pad.buttonA, AZ_BUTTON_B)
-        bind(pad.buttonY, AZ_BUTTON_X)
-        bind(pad.buttonX, AZ_BUTTON_Y)
-        bind(pad.leftShoulder, AZ_BUTTON_L)
-        bind(pad.rightShoulder, AZ_BUTTON_R)
-        bind(pad.leftTrigger, AZ_BUTTON_ZL)
-        bind(pad.rightTrigger, AZ_BUTTON_ZR)
-        bind(pad.buttonMenu, AZ_BUTTON_START)
-        bind(pad.buttonOptions, AZ_BUTTON_SELECT)
-        bind(pad.buttonHome, AZ_BUTTON_HOME)
-        bind(pad.dpad.up, AZ_BUTTON_UP)
-        bind(pad.dpad.down, AZ_BUTTON_DOWN)
-        bind(pad.dpad.left, AZ_BUTTON_LEFT)
-        bind(pad.dpad.right, AZ_BUTTON_RIGHT)
-        pad.leftThumbstick.valueChangedHandler = { _, x, y in az_stick(AZ_STICK_CIRCLE_PAD, x, y) }
-        pad.rightThumbstick.valueChangedHandler = { _, x, y in az_stick(AZ_STICK_C_STICK, x, y) }
+        guard let controller, let pad = controller.extendedGamepad else { return }
+        controller.playerIndex = .index1
+        attachButtons(controller)
         #if os(visionOS)
-        if let controller {
-            if (controller.vendorName ?? "").contains("VR2 Sense") { remapSensePair(pad) }
-            // The system keeps the PS / Home button for itself (it never reached the app on the
-            // device), so holding Options / Menu leaves the game; a short press is still START.
-            pad.buttonMenu.pressedChangedHandler = Self.startWithExitHold()
-            pad.buttonHome?.pressedChangedHandler = { _, _, pressed in
-                if pressed { NotificationCenter.default.post(name: .bifoldExitGame, object: nil) }
-            }
-            attachMotion(controller)
-        }
+        if (controller.vendorName ?? "").contains("VR2 Sense") { remapSensePair(pad) }
+        attachMotion(controller)
         #endif
         refreshGamepadState()
+    }
+
+    /// Every button, stick and d-pad of an extended gamepad goes through a GamepadRouter, which
+    /// looks the input up in ControllerMapping on each press.
+    private func attachButtons(_ controller: GCController) {
+        let profile = controller.physicalInputProfile
+        let router = GamepadRouter()
+        // A d-pad's directions are buttons too; the d-pad handler covers them.
+        let padButtons = profile.dpads.values.flatMap { [$0.up, $0.down, $0.left, $0.right] }
+        var names: [String] = []
+        for (name, input) in profile.buttons where !padButtons.contains(where: { $0 === input }) {
+            input.pressedChangedHandler = { _, _, pressed in router.button(name, pressed) }
+            names.append("\(name)=\(input.localizedName ?? "?")")
+        }
+        for (name, dpad) in profile.dpads {
+            dpad.valueChangedHandler = { _, x, y in router.pad(name, x, y) }
+        }
+        #if os(visionOS)
+        VisionDiag.log("controller inputs (\(controller.vendorName ?? "?")): \(names.sorted().joined(separator: ", ")) dpads=\(profile.dpads.keys.sorted().joined(separator: ","))")
+        #endif
+    }
+
+    // MARK: Remapping and hotkeys
+
+    /// Settings › Controls: the next button pressed on any controller goes to `handler` instead of
+    /// the game. Works without a game running.
+    func beginCapture(_ handler: @escaping (String) -> Void) {
+        GamepadRouter.capture = handler
+        if !GamepadRouter.active {
+            GCController.controllers().filter { $0.extendedGamepad != nil && !Self.isSpatial($0) }.forEach(attachButtons)
+        }
+    }
+
+    func endCapture() {
+        GamepadRouter.capture = nil
+    }
+
+    fileprivate func perform(_ hotkey: ControllerMapping.Hotkey) {
+        let core = EmulatorCore.shared
+        guard core.state == .running || core.state == .paused else { return }
+        let slot = ControllerMapping.quickSlot
+        let saves = core.currentGame?.supportsSaveStates == true
+        #if os(visionOS)
+        VisionDiag.log("hotkey: \(hotkey.rawValue)")
+        #endif
+        switch hotkey {
+        case .saveState:
+            guard saves else { return toast("This game has no save states") }
+            core.saveState(slot: slot)
+            toast("Saved to slot \(slot)")
+        case .loadState:
+            guard saves, core.saveStates().contains(where: { $0.slot == slot }) else { return toast("No quick save yet") }
+            core.loadState(slot: slot)
+            toast("Loaded slot \(slot)")
+        case .turbo:
+            core.isFastForward.toggle()
+            toast(core.isFastForward ? "Turbo on" : "Turbo off")
+        case .pause:
+            core.setPaused(core.state != .paused)
+            toast(core.state == .paused ? "Paused" : "Resumed")
+        case .exitGame:
+            NotificationCenter.default.post(name: .bifoldExitGame, object: nil)
+        }
+    }
+
+    private func toast(_ message: String) {
+        NotificationCenter.default.post(name: .holofoldToast, object: message)
     }
 
     #if os(visionOS)
@@ -412,4 +451,147 @@ final class InputManager: ObservableObject {
 extension Notification.Name {
     /// A controller's PS / Home button: the game window closes the game (visionOS).
     static let bifoldExitGame = Notification.Name("BifoldExitGame")
+}
+
+/// One extended gamepad's buttons, sticks and d-pad, routed through ControllerMapping.live on
+/// every event. GameController calls the handlers on the main queue, which is the only place
+/// this state is touched.
+final class GamepadRouter {
+    /// Set by Settings › Controls while it waits for a button (InputManager.beginCapture).
+    nonisolated(unsafe) static var capture: ((String) -> Void)?
+    /// A game is on screen (InputManager.start / stop).
+    nonisolated(unsafe) static var active = false
+
+    /// What each held input pressed, so its release lets go of the same 3DS button even if the
+    /// mapping changed in between.
+    private var held: [String: AZButton] = [:]
+    /// Inputs whose press was used by a hotkey or a capture: their release is dropped too.
+    private var swallowed = Set<String>()
+    private var padHeld: [String: Set<UInt32>] = [:]
+    private var hotkeyDown = false
+    private var comboUsed = false
+    /// The hotkey button's own 3DS button (Select by default), held back until it is clear the
+    /// press is not the start of a hotkey: sent once held 0.35 s alone, or as a tap on release.
+    private var deferred: AZButton?
+    private var deferredSent = false
+    private var deferTimer: DispatchWorkItem?
+    private var exitHold: DispatchWorkItem?
+
+    func button(_ name: String, _ pressed: Bool) {
+        if !pressed, swallowed.remove(name) != nil { return }
+        if pressed, let capture = Self.capture {
+            swallowed.insert(name)
+            capture(name)
+            return
+        }
+        if !pressed, let target = held.removeValue(forKey: name) {
+            release(target)
+            return
+        }
+        guard Self.active else { return }
+        let config = ControllerMapping.live
+        #if os(visionOS)
+        // The system keeps the PS / Home button for itself (it never reached the app on the
+        // device); if a pad does pass it on, it leaves the game.
+        if name == GCInputButtonHome {
+            if pressed { NotificationCenter.default.post(name: .bifoldExitGame, object: nil) }
+            return
+        }
+        #endif
+        if config.hotkeysEnabled, name == config.hotkeyButton {
+            hotkeyChanged(pressed, own: config.target(for: name))
+            return
+        }
+        guard pressed else { return }
+        if hotkeyDown, let hotkey = config.hotkey(for: name) {
+            comboUsed = true
+            swallowed.insert(name)
+            Task { @MainActor in InputManager.shared.perform(hotkey) }
+            return
+        }
+        guard let target = config.target(for: name) else { return }
+        held[name] = target
+        press(target)
+    }
+
+    func pad(_ name: String, _ x: Float, _ y: Float) {
+        guard Self.active, Self.capture == nil else { return }
+        switch ControllerMapping.live.stickTarget(forPad: name) {
+        case .circlePad: az_stick(AZ_STICK_CIRCLE_PAD, x, y)
+        case .cStick: az_stick(AZ_STICK_C_STICK, x, y)
+        case .dpad: digital(name, x, y)
+        case .none: break
+        }
+    }
+
+    /// A stick or d-pad as d-pad buttons, with a dead zone so menus step one item at a time.
+    private func digital(_ name: String, _ x: Float, _ y: Float) {
+        let threshold: Float = 0.5
+        var now = Set<UInt32>()
+        if y > threshold { now.insert(AZ_BUTTON_UP.rawValue) }
+        if y < -threshold { now.insert(AZ_BUTTON_DOWN.rawValue) }
+        if x < -threshold { now.insert(AZ_BUTTON_LEFT.rawValue) }
+        if x > threshold { now.insert(AZ_BUTTON_RIGHT.rawValue) }
+        let before = padHeld[name] ?? []
+        for raw in now.symmetricDifference(before) {
+            az_button(AZButton(rawValue: raw), now.contains(raw))
+        }
+        if !now.isEmpty, before.isEmpty { Task { @MainActor in InputManager.shared.gamepadUsed() } }
+        padHeld[name] = now
+    }
+
+    private func hotkeyChanged(_ pressed: Bool, own: AZButton?) {
+        deferTimer?.cancel()
+        deferTimer = nil
+        if pressed {
+            hotkeyDown = true
+            comboUsed = false
+            deferred = own
+            deferredSent = false
+            guard let own else { return }
+            let timer = DispatchWorkItem { [weak self] in
+                guard let self, self.hotkeyDown, !self.comboUsed else { return }
+                self.deferredSent = true
+                self.press(own)
+            }
+            deferTimer = timer
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: timer)
+            return
+        }
+        hotkeyDown = false
+        defer { deferred = nil; deferredSent = false }
+        guard let own = deferred else { return }
+        if deferredSent {
+            release(own)
+        } else if !comboUsed {
+            // A short press on its own: a tap of its 3DS button, long enough for a game to see.
+            press(own)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in self?.release(own) }
+        }
+    }
+
+    private func press(_ button: AZButton) {
+        az_button(button, true)
+        Task { @MainActor in InputManager.shared.gamepadUsed() }
+        #if os(visionOS)
+        // Holding START leaves the game (the PS / Home button is the system's).
+        if button == AZ_BUTTON_START {
+            exitHold?.cancel()
+            let hold = DispatchWorkItem {
+                VisionDiag.log("exit: START held")
+                NotificationCenter.default.post(name: .bifoldExitGame, object: nil)
+            }
+            exitHold = hold
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: hold)
+        }
+        #endif
+    }
+
+    private func release(_ button: AZButton) {
+        az_button(button, false)
+        if button == AZ_BUTTON_START {
+            exitHold?.cancel()
+            exitHold = nil
+        }
+    }
 }
