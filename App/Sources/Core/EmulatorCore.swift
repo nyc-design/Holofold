@@ -214,7 +214,7 @@ final class EmulatorCore: ObservableObject {
         let english: String
         switch result {
         case AZ_RESULT_ERROR_GET_LOADER: english = "This game file's format isn't recognized."
-        case AZ_RESULT_ERROR_ENCRYPTED: english = "This game is encrypted. Only decrypted dumps (decrypted .3ds/.cci, or an installed decrypted .cia) are supported."
+        case AZ_RESULT_ERROR_ENCRYPTED: english = "This game is encrypted and can't be decrypted with the keys available. Copy aes_keys.txt (and seeddb.bin for newer games) dumped from your own 3DS into Files › Holofold, then reopen the game."
         case AZ_RESULT_ERROR_INVALID_FORMAT: english = "The game file is damaged or not a valid format."
         case AZ_RESULT_ERROR_SYSTEM_FILES: english = "System files are missing. Copy the files dumped from your own console into Holofold › Azahar › sysdata."
         case AZ_RESULT_ERROR_VIDEO_CORE: english = "The graphics system (Vulkan/MoltenVK) couldn't start."
@@ -228,7 +228,7 @@ final class EmulatorCore: ObservableObject {
         let base: String
         switch result {
         case AZ_RESULT_ERROR_GET_LOADER: base = "无法识别的游戏文件格式。"
-        case AZ_RESULT_ERROR_ENCRYPTED: base = "游戏是加密的。Azahar 只支持解密后的游戏（.cci/.3ds 解密版或已安装的 CIA）。"
+        case AZ_RESULT_ERROR_ENCRYPTED: base = "游戏是加密的，但现有密钥无法解密。请导入从你自己的 3DS 导出的 aes_keys.txt（较新的游戏还需要 seeddb.bin）。"
         case AZ_RESULT_ERROR_INVALID_FORMAT: base = "游戏文件已损坏或格式无效。"
         case AZ_RESULT_ERROR_SYSTEM_FILES: base = "缺少系统文件。请在设置 → 系统文件中导入从你自己的 3DS 导出的文件。"
         case AZ_RESULT_ERROR_VIDEO_CORE: base = "图形初始化失败（Vulkan/MoltenVK）。"

@@ -99,29 +99,21 @@ The visionOS Simulator works for UI and layout checks only (`./scripts/build-cor
 
 ## Add your games
 
-1. **Dump your own cartridges** with your own 3DS (see Azahar's documentation for dumping guides). Holofold only supports **decrypted** dumps (`.cia`, `.3ds`, `.cci`, `.cxi`, `.3dsx`).
-2. Check that a dump is decrypted:
-   ```bash
-   python3 scripts/tools/ciacheck.py your-game.cia
-   ```
-   Every content should report `decrypted`, and the file `✅ usable`. Dumps that are still encrypted inside (NCCH) are rejected by Azahar.
+1. **Dump your own cartridges** with your own 3DS (see Azahar's documentation for dumping guides): `.cia`, `.3ds`, `.cci`, `.cxi`, `.3dsx`.
+2. **Encrypted dumps** need the keys of your own console. Holofold ships no Nintendo keys. On your 3DS, run GodMode9's DumpKeys script; it writes `aes_keys.txt` (and `seeddb.bin`, needed by newer, seed-encrypted games) to the SD card's `gm9` folder. Copy both files next to your games (below). Holofold moves them into `Azahar/sysdata`, decrypts encrypted `.cia` files while installing them, and decrypts encrypted `.3ds`/`.cci` files when they run. A `.cia` that failed to install before the keys were there is retried automatically. Decrypted dumps need no keys; `python3 scripts/tools/ciacheck.py your-game.cia` shows whether a dump is encrypted.
 3. Copy it to the headset, either:
    - in the Files app: **On My Apple Vision Pro › Holofold**, or
    - from your Mac: `./scripts/push-game.sh your-game.cia`. It copies into the app's Documents folder with `devicectl` and never deletes anything.
-4. Open Holofold. `.cia` files install automatically, then the game starts.
+4. Open Holofold. `.cia` files install automatically, then your games are listed. Pick one to play; a game with an auto-save resumes from it (long-press for **Start Over**). Games marked **Needs keys** are encrypted and wait for `aes_keys.txt` / `seeddb.bin`.
 
-Which game starts:
-
-1. `HOLOFOLD_AUTOBOOT_TITLE_ID` in `App/Config/Local.xcconfig` (the 16-digit title ID, or a file name), if set;
-2. otherwise your first game (by title);
-3. with no game of your own, the bundled open-source homebrew **StarCruiser7**, which also uses the stereoscopic top screen. A fresh build always has something to show.
+Leaving a game brings the list back. To skip the list and boot one game directly, set `HOLOFOLD_AUTOBOOT_TITLE_ID` in `App/Config/Local.xcconfig` (the 16-digit title ID, or a file name); it boots once per launch.
 
 ## Playing
 
 - **Top screen (3D)** fills the game window. Resize the window to make it bigger.
 - **Bottom screen** sits in its own window below. Look at it and pinch to tap; pinch and drag to slide.
 - **Control bar** above the game window: Pause/Resume, 3D Depth, Curved, frame rate, Bottom Screen (reopen it), Exit Game.
-- **Exit**: hold **Options / Menu** for about one second, use **Exit Game**, or press the Digital Crown. The game auto-saves first, and the next launch resumes from there.
+- **Exit**: hold **Options / Menu** for about one second, use **Exit Game**, or press the Digital Crown. The game auto-saves first and the game list comes back; picking the game again resumes from there.
 
 ### Controls
 
@@ -140,6 +132,8 @@ Which game starts:
 
 The PS button and the Xbox / Home button are reserved by visionOS and don't reach the app.
 
+The table is the default for standard controllers. **Settings › Controller Mapping & Hotkeys** remaps every button, sets what each stick and the d-pad drive, and configures hotkeys: hold the hotkey button (default SELECT) and press R (quick save, slot 1), L (quick load), ZR (turbo), ZL (pause) or START (exit). Tapped on its own, the hotkey button is still SELECT.
+
 ## Configuration
 
 Build settings (in `App/Config/Local.xcconfig`):
@@ -148,7 +142,7 @@ Build settings (in `App/Config/Local.xcconfig`):
 |---|---|---|
 | `HOLOFOLD_BUNDLE_ID` | `com.example.holofold` | Your bundle ID (required) |
 | `HOLOFOLD_INCREASED_MEMORY` | `NO` | Increased Memory Limit entitlement (paid accounts) |
-| `HOLOFOLD_AUTOBOOT_TITLE_ID` | empty | Game to boot (title ID or file name) |
+| `HOLOFOLD_AUTOBOOT_TITLE_ID` | empty | Game to boot instead of showing the list (title ID or file name) |
 | `HOLOFOLD_AUTO_RESUME` | `YES` | Resume from the auto-save |
 
 Launch arguments (Xcode › Edit Scheme › Run › Arguments, for example `-resolutionFactor 3`):
@@ -191,7 +185,7 @@ Remove personal paths from the logs before posting them in an issue.
 - tracking down the freeze (interpreter correctness, HLE services)
 - performance and frame pacing (60 fps content on a 90 Hz display)
 - an immersive mode (Compositor Services) and better curved-screen geometry
-- controller remapping, haptics
+- haptics
 - localization, documentation, testing on M2 headsets
 
 How to contribute:

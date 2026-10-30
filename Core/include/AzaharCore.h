@@ -34,6 +34,12 @@ bool az_init(const char* user_dir, const char* vulkan_library_path);
 /// Re-reads <user_dir>/config/ios-config.ini and applies it (also to a running game where possible).
 void az_reload_settings(void);
 
+/// Re-reads the AES keys (<user_dir>/sysdata/aes_keys.txt or keys.txt) after the player adds them.
+void az_reload_keys(void);
+
+/// Whether the player supplied a key file in <user_dir>/sysdata/.
+bool az_has_user_keys(void);
+
 /// Version string of the bundled Azahar core, e.g. "Azahar 2126.2".
 char* az_core_version(void);
 
@@ -75,7 +81,8 @@ bool az_get_game_info(const char* path, int language, AZGameInfo* out);
 
 typedef void (*AZProgressCallback)(uint64_t done, uint64_t total, void* ctx);
 
-/// Installs a .cia into the emulated SD/NAND. Returns 0 on success, otherwise
+/// Installs a .cia into the emulated SD/NAND. Encrypted CIAs need the player's own keys in
+/// sysdata/aes_keys.txt (and seeddb.bin for seed-encrypted titles). Returns 0 on success, otherwise
 /// 1 = error, 2 = encrypted, 3 = invalid, 4 = file not found, 5 = aborted.
 int az_install_cia(const char* path, AZProgressCallback cb, void* ctx);
 
@@ -327,6 +334,11 @@ void az_set_keyboard_callback(AZKeyboardCallback cb, void* ctx);
 /// The emulated console nickname (also the default multiplayer nickname).
 char* az_get_console_username(void);
 void az_set_console_username(const char* name);
+
+/// The emulated console's system language (0 JP, 1 EN, 2 FR, 3 DE, 4 IT, 5 ES, 6 ZH-Hans, 7 KO,
+/// 8 NL, 9 PT, 10 RU, 11 ZH-Hant). Setting it is ignored while a game runs.
+int az_get_console_language(void);
+void az_set_console_language(int language);
 
 // ---------------------------------------------------------------------------------------------
 // Multiplayer (Azahar/Citra room protocol — emulates 3DS local wireless over the internet/LAN)

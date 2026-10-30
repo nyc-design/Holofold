@@ -46,6 +46,7 @@
 #include "core/hle/service/am/am.h"
 #include "core/hle/service/cfg/cfg.h"
 #include "core/hle/service/fs/archive.h"
+#include "core/hw/aes/key.h"
 #include "core/loader/loader.h"
 #include "core/loader/smdh.h"
 #include "core/memory.h"
@@ -367,6 +368,15 @@ void az_reload_settings(void) {
     }
 }
 
+void az_reload_keys(void) {
+    HW::AES::InitKeys(true);
+}
+
+bool az_has_user_keys(void) {
+    const std::string sysdata = FileUtil::GetUserPath(FileUtil::UserPath::SysDataDir);
+    return FileUtil::Exists(sysdata + "aes_keys.txt") || FileUtil::Exists(sysdata + KEYS_FILE);
+}
+
 char* az_core_version(void) {
     return DupString(std::string("Azahar ") + Common::g_build_fullname);
 }
@@ -433,11 +443,11 @@ int az_install_cia(const char* path, AZProgressCallback cb, void* ctx) {
     if (!path) {
         return 4;
     }
-    // Azahar refuses NCCH-level encrypted content when installing from the frontend (only the
-    // emulated system's own installs may decrypt). InstallCIA only notices that halfway through
-    // and then reports "aborted"; check first so the user gets the real reason. ErrorInvalid is
-    // ignored here because the check also rejects non-NCCH (DS) contents that do install fine.
-    {
+    // Encrypted contents are decrypted during install with the player's own keys
+    // (sysdata/aes_keys.txt). Without a key file InstallCIA would only notice halfway through and
+    // report "aborted"; check first so the user gets the real reason. ErrorInvalid is ignored here
+    // because the check also rejects non-NCCH (DS) contents that do install fine.
+    if (!az_has_user_keys()) {
         bool compressed = false;
         if (Service::AM::CheckCIAToInstall(path, compressed, true) ==
             Service::AM::InstallStatus::ErrorEncrypted) {
@@ -1376,6 +1386,21 @@ void az_set_console_username(const char* name) {
     }
     auto cfg = std::make_shared<Service::CFG::Module>(system);
     cfg->SetUsername(Common::UTF8ToUTF16(name));
+    cfg->UpdateConfigNANDSavegame();
+}
+
+int az_get_console_language(void) {
+    auto cfg = std::make_shared<Service::CFG::Module>(Core::System::GetInstance());
+    return static_cast<int>(cfg->GetSystemLanguage());
+}
+
+void az_set_console_language(int language) {
+    auto& system = Core::System::GetInstance();
+    if (system.IsPoweredOn() || language < 0 || language > Service::CFG::LANGUAGE_TW) {
+        return; // only change the config savegame while no game is running
+    }
+    auto cfg = std::make_shared<Service::CFG::Module>(system);
+    cfg->SetSystemLanguage(static_cast<Service::CFG::SystemLanguage>(language));
     cfg->UpdateConfigNANDSavegame();
 }
 

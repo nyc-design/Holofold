@@ -14,6 +14,8 @@ enum VisionWindowID {
     static let game = "holofold-game"
     /// The bottom screen in its own small window, placed under the game window.
     static let touch = "holofold-touch"
+    /// Emulator settings (game list and in-game control bar).
+    static let settings = "holofold-settings"
     static let touchValue = "touch"
 }
 
@@ -266,6 +268,9 @@ struct VisionGameWindow: View {
     @State private var resumed = false
     /// Paused because the window became inactive (not by the player); resumed when it is active.
     @State private var pausedByPhase = false
+    /// Hotkey feedback ("Saved to slot 1" …), shown for a moment over the top screen.
+    @State private var toast: String?
+    @State private var toastTask: Task<Void, Never>?
 
     var body: some View {
         GeometryReader3D { proxy in
@@ -285,6 +290,17 @@ struct VisionGameWindow: View {
                     statusCard("Saving and exiting…")
                 } else if case .loading(let stage, _) = core.state {
                     statusCard(stage < 4 ? "Loading game…" : "Starting…")
+                }
+            }
+            .overlay(alignment: .top) {
+                if let toast {
+                    Text(toast)
+                        .font(.title3)
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 12)
+                        .glassBackgroundEffect()
+                        .padding(.top, 24)
+                        .transition(.opacity)
                 }
             }
         }
@@ -322,6 +338,16 @@ struct VisionGameWindow: View {
         }
         // Options held on a controller (the PS button itself is the system's).
         .onReceive(NotificationCenter.default.publisher(for: .bifoldExitGame)) { _ in requestExit() }
+        .onReceive(NotificationCenter.default.publisher(for: .holofoldToast)) { n in
+            guard let message = n.object as? String else { return }
+            withAnimation { toast = message }
+            toastTask?.cancel()
+            toastTask = Task { @MainActor in
+                try? await Task.sleep(for: .seconds(1.5))
+                guard !Task.isCancelled else { return }
+                withAnimation { toast = nil }
+            }
+        }
         .onChange(of: core.state) { _, state in
             switch state {
             case .idle where started:
@@ -450,6 +476,11 @@ struct VisionGameWindow: View {
             }
             .toggleStyle(.button)
             .help("Wrap the top screen around you")
+            Toggle(isOn: $core.isFastForward) {
+                Label("Turbo", systemImage: "forward.fill")
+            }
+            .toggleStyle(.button)
+            .help("Run at \(AppSettings.shared.fastForwardSpeed)% (Settings › Turbo Speed)")
             Text(String(format: "%.0f fps · %.0f%%", core.perf.game_fps, core.perf.emulation_speed * 100))
                 .font(.callout.monospacedDigit())
                 .foregroundStyle(.secondary)
@@ -459,6 +490,13 @@ struct VisionGameWindow: View {
                 Label("Bottom Screen", systemImage: "rectangle.bottomhalf.inset.filled")
             }
             .help("Reopen the bottom screen window")
+            Button {
+                openWindow(id: VisionWindowID.settings)
+            } label: {
+                Label("Settings", systemImage: "gearshape")
+            }
+            .labelStyle(.iconOnly)
+            .help("Settings")
             Button(role: .destructive) {
                 requestExit()
             } label: {

@@ -171,6 +171,8 @@ void Load() {
     Read(parsed, "System", v.is_new_3ds);
     Read(parsed, "System", v.lle_applets);
     Read(parsed, "System", v.region_value);
+    Read(parsed, "System", v.init_clock);
+    Read(parsed, "System", v.init_time);
     Read(parsed, "Data Storage", v.use_virtual_sd);
 
     // Every HLE service module needs an entry, otherwise Service::Init() throws.
